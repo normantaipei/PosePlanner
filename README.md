@@ -101,6 +101,9 @@ python3 scripts/add_pose.py ingest --manifest 今天的圖/_ingest.json
 
 - **形式**：Claude Code Skill（無後端伺服器、純檔案、可攜帶）。
 - **視覺分析**：直接由 Claude 看圖產出敘述與標籤——不需另接 vision API。
+- **SNS 貼文擷取（🧪 Beta）**：可丟 Instagram / Twitter-X / Facebook 貼文網址，自動擷取圖片入庫，
+  全程**不需 API key**。⚠️ 仍在 Beta：各平台反爬政策常變動，穩定度依平台而異——
+  Twitter/X 最穩、IG 只拿得到封面、FB 需借瀏覽器 cookies；擷取失敗時請改手動存圖。詳見 [SKILL.md](SKILL.md)。
 - **語意搜尋**：預設「Claude 產資料、腳本只寫檔」——檢索時腳本做 tag/關鍵字粗篩，
   語意排序交給 Claude 讀敘述完成；不必裝任何本地模型。需要真正向量 KNN 時，向量存進
   [sqlite-vec](https://github.com/asg017/sqlite-vec)（vendored 二進位）的 `vec0` 表，
@@ -207,6 +210,10 @@ tag 管精確、Claude 管模糊，互補。需要時可改走 sqlite-vec 的向
 - [x] SKILL.md：看圖 → 產 `{description, tags[]}` JSON（受 taxonomy 約束、可提 proposed 新 tag）
 - [x] `add_pose.py`：批次 manifest 匯入、content_hash 去重、存圖+縮圖、寫庫、更新 usage_count、向量寫 vec0（選配）
 - [x] 改用 [sqlite-vec](https://github.com/asg017/sqlite-vec) 向量引擎（vendored 二進位）+ `vecdb.py` 載入層
+
+### Phase 1.5 — SNS 貼文擷取 🧪 Beta
+- [x] `fetch_post.py`：IG / Twitter-X / Facebook 貼文圖片 + caption 擷取（免 API key）
+- [ ] 提升各平台穩定度（IG 多圖 carousel、FB 免 cookies、自動 caption）— 反爬政策常變，持續調整中
 
 ### Phase 2 — 學習迴圈
 - [ ] `update_profile.py`：重算向量重心、k-means 分群、產審美摘要
