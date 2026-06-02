@@ -13,7 +13,8 @@ description: >-
 
 ## 何時用這個 skill
 使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses…等。
-通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖）。
+通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖），
+**或丟一個 Instagram / Twitter(X) 貼文網址**（見下方「社群貼文入庫」）。
 
 ## 架構：純雲端、只上傳不下載
 
@@ -46,6 +47,50 @@ description: >-
 
 > 去重交給搜尋時的 `compact`（content_hash），所以入庫端**不需要**為了去重下載任何索引。
 > 同一張圖萬一不同天重複上傳也沒關係，合併成臨時庫時會自動略過。
+
+## 社群貼文入庫（Instagram / Twitter-X / Facebook，免 API key）
+
+使用者也可以**直接丟一個 IG / 推特 / FB 貼文網址**（或連同貼文文字一起貼上），
+要你把那則貼文的圖擷取進庫。用 `scripts/fetch_post.py`，**完全不需要任何 API key**：
+
+- **Twitter / X**：走公開的 syndication endpoint（給「嵌入推文」用的），免登入、免申請 token。
+  **圖 + 貼文文字(caption) + 作者**都抓得到，多圖也完整。最穩。
+- **Instagram**：走免登入的 `/p/<code>/media/?size=l`（會轉址到實際圖檔）。
+  ⚠ **誠實的限制**：IG 現在的貼文/embed 頁是 JS 殼，HTML 不再內嵌圖網址，所以免登入
+  **只拿得到封面那一張**，且**抓不到 caption**。私人/已下架/限流會抓不到——遇到就明講。
+- **Facebook**：⚠ **FB 把貼文圖鎖在登入後**，匿名請求只會漏出粉專頭像——所以純免登入
+  **幾乎抓不到**（腳本會 best-effort 試、濾掉頭像，多半 0 張並明確報錯）。FB 的正解是
+  `--gallery-dl --cookies-from-browser <瀏覽器>`：借**你瀏覽器平常的登入態**擷取，
+  **這仍然不需要任何 API key / 開發者 token**。caption 一樣請用 `--caption` 自己貼。
+
+只用 Python 標準庫，零安裝（FB 走 gallery-dl 那條才需要 `pip install gallery-dl`）。流程：
+
+```bash
+# Twitter/X：圖 + caption 都自動抓，直接吐入庫 manifest 骨架
+python3 scripts/fetch_post.py "<推文網址>" \
+    --out /tmp/poseplanner/ --manifest-skeleton
+
+# Instagram：圖自動抓（封面），caption 請把使用者貼上的貼文文字用 --caption 傳進去
+python3 scripts/fetch_post.py "<IG貼文網址>" --caption "使用者貼上的貼文文字" \
+    --out /tmp/poseplanner/ --manifest-skeleton
+
+# Facebook：借瀏覽器登入 cookies（免 API key），caption 一樣自己貼
+python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-browser chrome \
+    --caption "使用者貼上的貼文文字" --out /tmp/poseplanner/ --manifest-skeleton
+```
+
+- 圖會下載到 `/tmp/poseplanner/`，骨架裡每筆的 `image` 指向下載好的本地圖、
+  `source` 是正規化後的貼文網址、`description` 是待補的 TODO（**caption 會附在括號裡當輔助 context**）。
+- **「貼文輸入」**：使用者常會連貼文文字一起貼給你。Twitter 的 caption 會自動帶出；
+  **IG 的 caption 抓不到，請把使用者貼的那段文字用 `--caption "…"` 傳進去**（或自己填進骨架）。
+- 拿到骨架後，**照下面正常入庫流程的第 2 步親自看每一張圖**，把 `description` 改寫成真正的動作敘述、
+  補上 `tags`（caption 只是輔助，標籤仍以你看到的畫面為準，別照抄貼文文案）。
+- 然後就跟手動加圖一樣：寫成 `_ingest.json` → `pack` → 上傳 fragment（第 3～5 步）。
+- 使用者只貼**文字沒網址**時：沒有可擷取的圖，請他改附圖片走一般入庫；caption 文字可作為敘述參考。
+
+> 後援：環境若裝了 `gallery-dl`，可加 `--gallery-dl`——IG 多圖 carousel / FB 貼文圖 / 自動
+> caption 要靠它，搭配 `--cookies-from-browser <瀏覽器>` 借登入態（FB 幾乎必備）。擷取失敗
+> （私人、已刪、平台限流、FB 鎖登入）會以非 0 結束並印原因——**據實回報，別假裝抓到了**。
 
 ## 入庫流程（一定照這個順序）
 
@@ -162,6 +207,8 @@ python3 scripts/add_pose.py pack \
 ## 相關腳本
 - `scripts/add_pose.py`：核心。`pack`（看圖後打包 fragment，不寫庫）/ `compact`（搜尋時把
   fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
+- `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；
+  Twitter/IG 純標準庫，FB 走 gallery-dl + 瀏覽器 cookies）。**已實作**。
 - `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）。**已實作**。
 - `scripts/vecdb.py`：sqlite-vec 載入層（挑平台二進位、必要時 re-exec 到可用 python）。
 - `scripts/update_profile.py`：重算審美畫像（Phase 2，未實作）

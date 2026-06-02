@@ -17,6 +17,7 @@ zip -r "$OUT" \
   taxonomy.yaml \
   requirements.txt \
   scripts/add_pose.py \
+  scripts/fetch_post.py \
   scripts/search.py \
   scripts/vecdb.py \
   scripts/schema.sql \
