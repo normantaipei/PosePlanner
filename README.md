@@ -1,8 +1,93 @@
 # PosePlanner
 
-**Cosplay 拍攝計劃書生成小幫手** —— 一個會**自動學習、持續延展**的個人 cos 攝影參考庫。
+**Cosplay 拍攝計劃書生成小幫手** —— 一個由獨立開發者NormanHsiao開發的**自動學習、持續延展**的個人 cos 攝影參考庫。
 
-每天餵入你覺得漂亮的 cosplay 圖，它會自動辨識角色／作品、轉成動作敘述與結構化標籤入庫，逐漸學會你的審美與出鏡偏好，最後幫你挑 pose、生成拍攝計劃書。
+每天餵入你覺得漂亮的 cosplay 圖，它會自動辨識角色／作品、轉成動作敘述與結構化標籤入庫，逐漸學會你的審美與出鏡偏好，在你需要參考圖或是靈感時幫你挑 pose、甚至根據出角角色生成拍攝計劃書。
+
+> ## ☁️ 重要：本專案是 **Serverless 架構**
+> **沒有任何後端伺服器**，所有資料庫（`library.db`）與圖片都只存在**你自己的 Google Drive 個人雲端硬碟**——
+> 我們不持有、也不經手你的任何資料。
+>
+> 👉 因此使用前**務必先在 Claude Desktop 綁定並開通 Google Drive 連接器**
+> （**設定 → 連接器 → Google Drive**），否則 skill 無法讀寫你的庫、資料也無處保存。
+
+> ## 🎓 開發初衷與使用聲明
+> 本專案是為了**幫助新手攝影師與 cosplayer 學習、成長**而開發——讓你累積審美、練習構圖與 pose、找到靈感。
+>
+> ⚠️ **絕對不支持任何盜版或商業使用。** 請只餵入你有權使用的圖片，並尊重原作者、原 IP 與被攝者的權益；
+> 本工具僅供個人學習與參考，請勿用於任何侵權或營利行為。
+
+---
+
+## 🚀 安裝
+
+PosePlanner 是一個 **Agent Skill**。Claude Desktop 與 Claude Code 的安裝方式不同 ——
+**Desktop 要上傳 zip，Code 是放進 skills 資料夾**。請依你用的版本選一邊。
+
+> ⚠️ 注意：兩者的 skill 目錄不互通。`~/.claude/skills/` 只有 **Claude Code** 會讀，
+> **Claude Desktop 不讀那裡**，必須照下面 A 的方式從設定上傳。
+
+### A. Claude Desktop（上傳 zip）
+
+前置：Desktop 需開啟 **程式碼執行 / Skills 能力**（付費方案）。
+
+1. 打包出可上傳的 zip：
+   ```bash
+   bash scripts/build_skill_zip.sh        # 產出 dist/poseplanner-skill.zip
+   ```
+2. 開 **Claude Desktop → 設定（Settings）→ Capabilities / 能力 → Skills**。
+3. 選 **Upload skill / 新增 skill**，上傳 `dist/poseplanner-skill.zip`，啟用它。
+4. 回到對話，**把圖直接拖／上傳進輸入框**，然後說：
+   > 幫我把這張 cos 圖入庫
+
+   Claude 會看圖 → 產敘述與標籤 → 在沙箱裡寫入 `library.db`。
+
+> 📌 Desktop 沙箱是雲端 Linux、每次對話會重置，所以 `library.db` 預設**不跨對話保存**。
+> 想累積成長的庫，見下方〔跨對話保存〕。縮圖在 Desktop 由 Pillow 產（沙箱內建），
+> 不依賴 macOS 的 `sips`。
+
+### B. Claude Code（CLI / VSCode）
+
+```bash
+git clone <this-repo-url> PosePlanner && cd PosePlanner
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)" ~/.claude/skills/poseplanner   # 軟連結，git pull 即更新
+```
+重開 Claude Code，輸入 `/` 應看到 `poseplanner`；圖放本機資料夾，直接說
+「把 `~/Desktop/今天的圖/` 入庫」。庫永久存在本機 `data/library.db`。
+
+### 向量引擎（已 vendored，不需安裝）
+語意 KNN 用的 [sqlite-vec](https://github.com/asg017/sqlite-vec) 二進位已放在
+`vendor/sqlite-vec/`（mac/linux），**不需 pip**。唯一需求是執行的 Python 其 sqlite3
+支援 loadable extension——macOS 內建 `/usr/bin/python3` 不支援，腳本會**自動 re-exec**
+到支援的 python3（`brew install python` 即可），使用者照常 `python3 scripts/...`。
+
+### （選配）增強相依
+**不裝也能入庫與檢索**（核心只用 Python 標準庫 + vendored sqlite-vec）。要更好的縮圖、
+或想用本地 embedding 做向量 KNN 再裝：
+```bash
+pip3 install -r requirements.txt        # pillow / pyyaml /（選配）fastembed
+```
+
+### 跨對話保存（Desktop / 手機）
+雲端沙箱用完即焚，所以庫存在**你自己的 Google Drive**，由 skill 每次「下載→入庫→上傳」：
+
+- 在 Drive 放一個 `PosePlanner/` 資料夾，裡面是單一 `library.db` + `images/`。
+- 每次對話開場，skill 透過 **Google Drive 連接器**把 `library.db` 下載進沙箱；入庫後再覆寫回去，
+  新圖上傳到 `PosePlanner/images/`。你完全不用手動搬檔。
+- 庫是**單一 SQLite 檔**（已關掉 WAL，無旁檔），所以可攜帶、可整包分享 —— 把 `library.db`
+  給別人匯入，就繼承你的審美庫。
+- 手機可用：連接器是伺服器端的，手機版 Claude 一樣連得到。
+
+> 需要先在 Claude 裡連接 Google Drive（設定 → 連接器）。詳細協作步驟見 [SKILL.md](SKILL.md)
+> 的〔雲端：開場同步 / 收場寫回〕。
+
+### 手動試跑（不透過 Claude）
+```bash
+python3 scripts/add_pose.py stats                       # 看庫狀態（首次自動建庫）
+python3 scripts/add_pose.py ingest --manifest 今天的圖/_ingest.json
+```
+`manifest` 是 JSON 陣列，每筆含 `image` / `description` / `tags[]`，格式見 [SKILL.md](SKILL.md)。
 
 ---
 
@@ -16,8 +101,11 @@
 
 - **形式**：Claude Code Skill（無後端伺服器、純檔案、可攜帶）。
 - **視覺分析**：直接由 Claude 看圖產出敘述與標籤——不需另接 vision API。
-- **語意搜尋**：用本地 embedding（如 `fastembed` / 多語模型 `bge-m3`，支援中文），向量存進 SQLite，免 API key。
-- **儲存**：單一 SQLite 檔（`library.db`）+ `images/` 資料夾，整包即可分享。
+- **語意搜尋**：預設「Claude 產資料、腳本只寫檔」——檢索時腳本做 tag/關鍵字粗篩，
+  語意排序交給 Claude 讀敘述完成；不必裝任何本地模型。需要真正向量 KNN 時，向量存進
+  [sqlite-vec](https://github.com/asg017/sqlite-vec)（vendored 二進位）的 `vec0` 表，
+  可選 `fastembed`（多語小模型，支援中文）或外部 embedding 供應商，免 API key。
+- **儲存**：單一 SQLite 檔（`library.db`，含 sqlite-vec 向量）+ `images/` 資料夾，整包即可分享。
 
 ## 專案結構（規劃）
 
@@ -26,13 +114,16 @@ poseplanner/
 ├── SKILL.md              # 指示 Claude：看圖 → 依 taxonomy 產出 JSON
 ├── taxonomy.yaml         # 標籤維度的初始種子（非封閉，可成長）
 ├── scripts/
-│   ├── add_pose.py       # 收 JSON+圖片 → 去重 → embedding → 寫 DB
-│   ├── search.py         # tag 篩選 + 語意搜尋 + 相似推薦
+│   ├── add_pose.py       # 收 JSON+圖片 → 去重 → 寫 DB（向量選配）
+│   ├── search.py         # tag 篩選 + Claude 語意挑選（選配向量 KNN）
+│   ├── vecdb.py          # sqlite-vec 載入層（挑平台二進位、必要時 re-exec）
 │   ├── update_profile.py # 重算審美畫像、分群
 │   ├── consolidate.py    # 同義詞合併、proposed→active、清冷門 tag
 │   └── make_plan.py      # 選 pose → shot list → 計劃書
+├── vendor/
+│   └── sqlite-vec/       # 向量引擎二進位（mac/linux，vendored、進版控）
 └── data/
-    ├── library.db        # SQLite（可攜帶、可分享）
+    ├── library.db        # SQLite + sqlite-vec（可攜帶、可分享）
     └── images/           # 原圖 + 縮圖
 ```
 
@@ -47,7 +138,7 @@ poses (
   favorite, rating,           -- 可選的顯式回饋
   source, created_at
 )
-pose_embeddings (pose_id, vector)      -- 敘述向量（語意搜尋）
+pose_vectors USING vec0(pose_id, embedding FLOAT[384], +model)  -- sqlite-vec 向量（KNN，選配）
 
 -- 標籤（動態、可延展）
 tags (id, name, category, usage_count, status, created_at)  -- status: active / proposed
@@ -95,7 +186,7 @@ plan_items (id, plan_id, pose_id, position, note)
 ```
 poseplanner add ./今天的圖/
   └─ 逐張：content_hash 去重 → Claude 看圖產 {description, tags}
-            → tag 對映（既有 or 新增/proposed）→ 算 embedding → 寫入
+            → tag 對映（既有 or 新增/proposed）→ 寫入（向量選配）
   └─ 批次後：更新 usage_count、重算 taste_profile
             → 若 proposed tag 達門檻 / 同義詞過多 → 觸發整理
   └─ 回報：「今天 +12 張，新增角色：雷電將軍；新學到 tag：持薙刀、戰鬥姿；『暗黑御姐』調性又長了 8 張」
@@ -103,32 +194,36 @@ poseplanner add ./今天的圖/
 
 ## 搜尋流程
 
-tag 維度硬篩（站姿 + 室內）縮小範圍 → 敘述向量語意排序（「想要慵懶的感覺」）→ Claude 對 top-N 做最後挑選。tag 管精確、向量管模糊，互補。
+tag 維度硬篩（站姿 + 室內）縮小範圍 → **Claude 讀敘述做語意挑選**（「想要慵懶的感覺」）。
+tag 管精確、Claude 管模糊，互補。需要時可改走 sqlite-vec 的向量 KNN（`search.py --knn`）。
 
 ---
 
 ## 開發路線（逐項完成）
 
-### Phase 1 — 圖片入庫
-- [ ] 定義 `taxonomy.yaml` 初始種子
-- [ ] 建表 SQL + seed tags
-- [ ] SKILL.md：看圖 → 產 `{description, tags[]}` JSON（受 taxonomy 約束、可提 proposed 新 tag）
-- [ ] `add_pose.py`：批次資料夾匯入、content_hash 去重、存圖+縮圖、算 embedding、寫庫、更新 usage_count
+### Phase 1 — 圖片入庫 ✅
+- [x] 定義 `taxonomy.yaml` 初始種子
+- [x] 建表 SQL + seed tags（`scripts/schema.sql`）
+- [x] SKILL.md：看圖 → 產 `{description, tags[]}` JSON（受 taxonomy 約束、可提 proposed 新 tag）
+- [x] `add_pose.py`：批次 manifest 匯入、content_hash 去重、存圖+縮圖、寫庫、更新 usage_count、向量寫 vec0（選配）
+- [x] 改用 [sqlite-vec](https://github.com/asg017/sqlite-vec) 向量引擎（vendored 二進位）+ `vecdb.py` 載入層
 
 ### Phase 2 — 學習迴圈
 - [ ] `update_profile.py`：重算向量重心、k-means 分群、產審美摘要
 - [ ] `consolidate.py`：同義詞合併建議、proposed→active 升級、冷門 tag 清理
 - [ ] 每日 ingest 回報（`ingest_log`）
 
-### Phase 3 — 檢索
-- [ ] `search.py`：tag 組合篩選
-- [ ] 語意搜尋（向量）+ 相似姿勢推薦
+### Phase 3 — 檢索 ✅
+- [x] `search.py`：tag 組合篩選 + 關鍵字粗篩 → Claude 語意挑選
+- [x] 向量語意搜尋（sqlite-vec vec0 KNN，`--knn`，選配）
 
 ### Phase 4 — 拍攝計劃書
 - [ ] `make_plan.py`：選 pose → shot list → Markdown / PDF
 - [ ] 依審美畫像推薦 pose
 - [ ] `plans` / `plan_items` 管理
 
-### Phase 5 — 分享
-- [ ] 匯出／匯入 pose pack（一個 `.db` + `images/` 即可分享）
-- [ ] 打包成可安裝的 Claude Code Skill
+### Phase 5 — 分享 / 雲端持久化
+- [x] 打包成可安裝的 Skill：Desktop 上傳 zip（`scripts/build_skill_zip.sh`）、Code 軟連結
+- [x] db/data 路徑可覆寫（`--db` / `--data` / 環境變數）＋ 單一檔（關 WAL），雲端可整檔搬運
+- [ ] Google Drive 連接器持久化：開場下載 → 入庫 → 收場覆寫（SKILL.md 已寫流程，待實測連接器讀寫二進位）
+- [ ] 匯出／匯入 pose pack（一個 `.db` + `images/` 即可分享、繼承審美庫）

@@ -1,0 +1,168 @@
+---
+name: poseplanner
+description: >-
+  Cosplay 拍攝參考庫（純雲端）。當使用者要「餵圖入庫 / 分析 cos 圖 / 把圖加進 pose 庫 /
+  add poses / 整理 cosplay 參考圖」時使用。看圖產出動作敘述與結構化標籤，
+  依 taxonomy 約束打包成小 fragment 上傳到使用者的 Google Drive，逐步累積審美庫。
+---
+
+# PosePlanner — 圖片入庫（純雲端）
+
+你是一個 cosplay 拍攝參考庫的管理員。使用者每天會丟「他覺得漂亮」的 cos 圖進來，
+你要看圖、產出敘述與標籤、入庫。每一張入庫的圖都是一個正向的審美訊號。
+
+## 何時用這個 skill
+使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses…等。
+通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖）。
+
+## 架構：純雲端、只上傳不下載
+
+這個 skill **完全在雲端沙箱（手機 / Desktop）運行**，庫存在使用者的 **Google Drive**。
+核心設計是**讓 token 成本與庫的大小脫鉤**：
+
+- **入庫（每天、便宜）**：看圖 → `pack` 成一個小 fragment（zip）→ 用 Drive 連接器上傳到
+  `PosePlanner/fragments/`。**永遠不下載整個庫**，每次成本 O(今天新增)。
+- **庫的真身 = 累積的 fragments**。Drive 上**只有** `fragments/` 這個 append-only 收件匣，
+  沒有一份要維護、要覆寫的 `library.db`。這剛好閃開「Drive 連接器只能新建、不能覆寫/刪除」。
+- **搜尋（偶爾、較貴）**：要查庫時，把 `fragments/*.zip` 拉下來，在沙箱 `compact` 成一份
+  **臨時** `library.db` 再查。查完即丟，不回傳。
+
+> ⚠️ **誠實的取捨：** 連接器沒有「部分讀取 SQLite」這種事——要在雲端搜尋，只能把資料整包
+> base64 抓下來。所以**入庫便宜、搜尋會把當下的 fragments 都下載**。入庫頻繁、搜尋偶爾，
+> 這個權衡通常划算；但庫變很大後搜尋會變重，屆時可手動清併過的舊 fragment。
+
+> ⚙️ **向量引擎需求**：庫的（選配）向量搜尋靠 `vendor/sqlite-vec/` 的 vec0，是 loadable
+> extension，需要 Python 的 sqlite3 支援 `enable_load_extension`。腳本會在需要時**自動
+> re-exec 到支援的 python3**；找不到會明確報錯。sqlite-vec 二進位已 vendored，**不需 pip 安裝**。
+
+## 開場準備（每次對話一次）
+
+雲端沙箱用完即焚，所以每次先把工作環境備好：
+
+1. 建工作目錄：`/tmp/poseplanner/`（圖暫存）、`/tmp/poseplanner/outbox/`（放打包好的 zip）。
+2. **裝 Pillow**（縮圖需要；沙箱是 Linux，沒有 macOS 的 `sips`）：`pip install pillow`。
+   沒裝的話 fragment 裡會沒有縮圖，之後搜尋就沒縮圖可看。
+3. 確認 Google Drive 連接器可用（上傳 fragment / 搜尋時下載 fragment 都靠它）。
+
+> 去重交給搜尋時的 `compact`（content_hash），所以入庫端**不需要**為了去重下載任何索引。
+> 同一張圖萬一不同天重複上傳也沒關係，合併成臨時庫時會自動略過。
+
+## 入庫流程（一定照這個順序）
+
+### 1. 讀 taxonomy
+先讀 `taxonomy.yaml`，記住有哪些**維度（category）**與既有種子值。
+標籤的維度是固定的（保證一致性），維度底下的「值」可以成長。
+
+### 2. 逐張看圖，產出 JSON
+針對使用者給的每一張圖，**親自看圖**，產出一筆物件：
+
+```json
+{
+  "image": "今天的圖/a.jpg",
+  "description": "一句到數句的自然語言『動作』敘述：人物姿態、手部、視線、情緒、構圖。聚焦於 pose，不要寫角色設定百科。",
+  "tags": [
+    {"category": "ip",              "name": "鬼滅之刃"},
+    {"category": "character",       "name": "禰豆子"},
+    {"category": "people_count",    "name": "單人"},
+    {"category": "framing",         "name": "半身"},
+    {"category": "pose",            "name": "站"},
+    {"category": "gaze_expression", "name": "看鏡頭"},
+    {"category": "emotion",         "name": "療癒"}
+  ],
+  "source": "選填，來源或檔名"
+}
+```
+
+標籤規則：
+- **category 一定要用 taxonomy.yaml 裡既有的維度 key**（如 `pose`、`emotion`、`ip`…）。
+- value 優先沿用既有種子值；圖裡有新東西就放新值（例如新角色名）——合併時會自動採用。
+- 只有當你覺得需要一個**全新維度**（taxonomy 沒有的 category）時才自創 category；
+  腳本會把它標成 `proposed` 等使用者確認，所以請少用、且在回報時說明。
+- 每張至少給：作品/角色（若認得出）、人數、取景、體位、情緒。認不出作品就略過該維度，不要亂猜。
+
+### 3. 寫 manifest → `pack` 成 fragment（不寫庫）
+把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`。
+圖先存進 `/tmp/poseplanner/`（manifest 裡 `image` 可用相對 manifest 的路徑或絕對路徑）。
+然後打包：
+
+```bash
+python3 scripts/add_pose.py pack \
+    --manifest /tmp/poseplanner/_ingest.json \
+    --out /tmp/poseplanner/outbox/
+```
+
+產出 `…/outbox/frag-<時間戳>.zip`，內含 `manifest.json`（每筆帶 content_hash + 縮圖名）
++ `thumbs/<hash>.jpg`。**原圖 bytes 不在裡面**——原圖留在你加圖的裝置即可。`pack` 完全
+**不碰任何庫**。
+
+> 🧠 **設計：Claude 產資料、腳本只寫檔。** **預設不自算向量**——語意理解由你（Claude）在
+> 搜尋時讀敘述完成。向量是選配：manifest 帶現成 `embedding`（384 維）會被打進 fragment、
+> 搜尋時 `compact` 寫入 vec0。
+
+### 4. 上傳這「一個 zip」（收場）
+用 Google Drive 連接器把**剛打包好的 fragment zip**（通常只有幾十～幾百 KB）丟上去。
+
+`create_file`：
+- `parentId`：`PosePlanner/fragments/` 的 folderId（沒有就先 `create_file` 建資料夾鏈：
+  先建 `PosePlanner`，再在它底下建 `fragments`）
+- `title`：`frag-<時間戳>.zip`（沿用檔名）
+- `base64Content`：**這個 zip** 的 base64
+- `contentMimeType`：`application/zip`
+- `disableConversionToGoogleType`：**`true`** ← 不加 Drive 會嘗試轉檔弄壞它！
+
+> ✅ **只上傳這一包，不下載任何東西、不上傳原圖、不上傳整個庫。** 這就是 token 省下來的關鍵：
+> 每次成本是 O(今天新增) 而非 O(整個庫)。連接器有單筆大小上限，原圖（3–8MB）會超限失敗，
+> 但一包 fragment 很小，穩過。
+>
+> 上傳失敗就**明講**並保留 `/tmp/poseplanner/outbox/` 的 zip，別讓使用者以為存好了。
+
+### 5. 回報
+把 `pack` 印出的摘要轉述給使用者，並補充你的觀察，例如：
+> 今天 +12 張，新增角色：雷電將軍；新學到 tag：持薙刀、戰鬥姿。
+> 我注意到你最近偏好「逆光 × 慵懶」這個調性。（已上傳一包 fragment 到你的 Google Drive。）
+
+如果有 `proposed` 新維度，主動問使用者是否要保留。
+
+## 檢索（搜尋庫）— 需要時才重建
+
+使用者問「我有沒有 X 的圖 / 找幾張像 Y 的」時，因為庫的真身是 Drive 上累積的 fragments，
+**先把它們拉下來、在沙箱合併成一份臨時庫，再查**：
+
+1. **下載 fragments**：用 Drive 連接器列出 `PosePlanner/fragments/` 底下所有 `*.zip`，
+   逐個 `download_file_content` 取 base64 → 存到 `/tmp/poseplanner/fragments/`。
+   （這步會把目前所有 fragment 抓下來，是搜尋較貴的原因。）
+2. **合併成臨時庫**：
+   ```bash
+   python3 scripts/add_pose.py compact \
+       --fragments /tmp/poseplanner/fragments \
+       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+   ```
+   `compact` 以 content_hash 去重（重複的圖只入一次），縮圖落地到 `/tmp/poseplanner/images/thumbs/`。
+3. **查候選 → 你做語意挑選**（這就是「Claude 當語意引擎」的地方）：
+   ```bash
+   python3 scripts/search.py "想要回眸的帥氣站姿" \
+       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+   python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30 \
+       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+   ```
+   `QUERY` 以空白拆成多個關鍵字，對 description 做 AND 模糊比對（只是粗篩，真正的語意排序由你判斷）。
+
+> 這份 `/tmp/poseplanner/library.db` 是**臨時**的、查完即丟——**不要**回傳到 Drive。
+> Drive 上永遠只維護 `fragments/`。
+
+> 進階：若 fragment 裡帶了向量（manifest 給過 `embedding`），可加 `--knn` 走 sqlite-vec
+> 向量最近鄰。一般情況用預設模式即可，語意交給你來挑。
+
+## 注意
+- 不要重複入庫：以 content_hash 去重，但你也別把同一張圖在 manifest 裡列兩次。
+- 看不清楚或不是 cosplay 的圖，先問使用者，不要硬塞標籤。
+- 庫很大後搜尋下載會變重；可請使用者把「已確認併進過的舊 fragment」在 Drive 手動清掉
+  （連接器不能代刪）。content_hash 去重保證重抓也不會重複，所以清舊包很安全。
+
+## 相關腳本
+- `scripts/add_pose.py`：核心。`pack`（看圖後打包 fragment，不寫庫）/ `compact`（搜尋時把
+  fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
+- `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）。**已實作**。
+- `scripts/vecdb.py`：sqlite-vec 載入層（挑平台二進位、必要時 re-exec 到可用 python）。
+- `scripts/update_profile.py`：重算審美畫像（Phase 2，未實作）
+- `scripts/make_plan.py`：產拍攝計劃書（Phase 4，未實作）

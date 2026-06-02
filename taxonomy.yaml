@@ -1,0 +1,72 @@
+# PosePlanner 標籤維度（taxonomy 初始種子）
+#
+# 「維度（category）」是固定的、用來保證一致性；維度底下的「值」是開放的，
+# 可隨餵圖成長。add_pose.py 用這份檔案判斷一個 tag 該自動採用還是標 proposed：
+#   - tag 的 category 在這裡 → active（既有維度內的新值自動採用）
+#   - tag 的 category 不在這裡 → proposed（全新維度，待你確認或達門檻才升級）
+#
+# 每個維度：
+#   label   給人看的中文名
+#   open    值是否開放成長（true=可自由新增值；作品/角色之類都 true）
+#   seed    初始種子值（會在建庫時 seed 進 tags 表）
+
+dimensions:
+  ip:
+    label: 作品 / IP
+    open: true
+    seed: [鬼滅之刃, 原神, 火影忍者, 東方Project, VTuber]
+
+  character:
+    label: 角色
+    open: true
+    seed: [禰豆子, 雷電將軍, 初音未來]
+
+  character_trait:
+    label: 角色屬性
+    open: true
+    seed: [萌系, 帥氣, 御姐, 病嬌, 反派, 中二]
+
+  people_count:
+    label: 人數
+    open: false
+    seed: [單人, 雙人, 團cos]
+
+  framing:
+    label: 取景
+    open: false
+    seed: [全身, 半身, 特寫]
+
+  pose:
+    label: 體位
+    open: true
+    seed: [站, 坐, 跪, 倚靠, 戰鬥, 飛踢]
+
+  hands_props:
+    label: 手部 / 道具
+    open: true
+    seed: [持刀, 持槍, 法杖, 比手勢, 撥髮]
+
+  gaze_expression:
+    label: 視線 / 表情
+    open: true
+    seed: [看鏡頭, 側望, 閉眼, 帥氣, 嬌羞]
+
+  emotion:
+    label: 情緒
+    open: true
+    seed: [自然, 慵懶, 性感, 殺氣, 療癒]
+
+  camera_angle:
+    label: 鏡位
+    open: false
+    seed: [平視, 俯拍, 仰拍, 過肩]
+
+  scene:
+    label: 場景
+    open: true
+    seed: [棚拍, 漫展, 外景, 綠幕去背, 動漫實景]
+
+  style:
+    label: 風格
+    open: true
+    seed: [還原劇照, 唯美, 暗黑, 日系, 二創]

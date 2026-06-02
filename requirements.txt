@@ -1,0 +1,20 @@
+# PosePlanner 相依
+#
+# 核心入庫 + Claude 驅動檢索：只用 Python 標準庫 + macOS 內建 sips，零安裝即可運作。
+#
+# ⚠ 一個硬性需求（非 pip 套件）：執行的 Python 其 sqlite3 必須支援 loadable extension，
+#   才能載入 vendor/sqlite-vec/ 的向量引擎（vec0 虛擬表）。
+#   macOS 內建 /usr/bin/python3 不支援；腳本會自動 re-exec 到支援的 python3
+#   （如 Homebrew：`brew install python`）。也可用 POSEPLANNER_PYTHON 指定。
+#   sqlite-vec 本身是 vendored 二進位，**不需要** pip 安裝。
+
+# 縮圖品質更好、跨平台（沒裝會自動 fallback 到 sips）
+pillow>=10.0
+
+# 讓 taxonomy.yaml 解析更穩（沒裝會用內建最小解析器）
+pyyaml>=6.0
+
+# 選配：本地算敘述向量（--embed / search --knn 才需要）。多語小模型，對中文友善。
+# 不裝也能跑——預設「Claude 產資料、腳本只寫檔」，向量由 Claude 在對話中做語意挑選。
+# 注意：會一併拉進 onnxruntime，較大。
+fastembed>=0.3

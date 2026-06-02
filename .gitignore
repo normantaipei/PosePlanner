@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── PosePlanner ──
+# 個人審美庫：預設不進版控（要分享時再單獨打包 .db + images/）
+data/library.db
+data/library.db-wal
+data/library.db-shm
+data/images/
+
+# sqlite-vec 向量引擎二進位是 vendored 的，必須進版控（覆蓋上面的 *.so / lib/ 規則）
+!vendor/
+!vendor/**
+!vendor/sqlite-vec/*.so
+!vendor/sqlite-vec/*.dylib
