@@ -10,9 +10,11 @@
      python3 scripts/search.py "想要回眸的帥氣站姿"
      python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30
      python3 scripts/search.py "逆光 慵懶" --tag people_count=單人 --json
+     python3 scripts/search.py --tag framing=全身 --table   # ← Markdown 表（含縮圖），直接貼進對話
 
    QUERY 會以空白拆成多個關鍵字，對 description 做 AND 的 LIKE 模糊比對（先粗篩，
-   真正的語意排序交給 Claude）。給了 --json 就同時印出機器可讀的結果。
+   真正的語意排序交給 Claude）。給了 --json 就同時印出機器可讀的結果；給了 --table
+   會印一張 Markdown 表格（縮圖 / 描述 / 標籤 / 訊號），貼進對話串就會渲染成圖表。
 
 2) **向量 KNN（選配，--knn）**：若 pose_vectors（sqlite-vec 的 vec0 表）裡有向量，
    用 fastembed 把 QUERY 算成向量做真正的最近鄰搜尋。需要 `pip install fastembed`，
@@ -158,6 +160,49 @@ def _print_human(results: list[dict], mode: str) -> None:
         print("→ 以上是粗篩候選；請依使用者的描述語意挑出最貼近的幾張。")
 
 
+def _md_cell(text: str) -> str:
+    """把任意文字塞進 Markdown 表格的一格：跳脫 |、把換行壓成空白。"""
+    return (text or "").replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _abs_path(rel: str | None) -> str | None:
+    """把相對 data/ 的路徑轉成絕對路徑（讓對話裡的 Markdown 圖片/連結能解析）。"""
+    if not rel:
+        return None
+    return str((add_pose.DATA_DIR / rel).resolve())
+
+
+def _print_table(results: list[dict], mode: str) -> None:
+    """印一張 Markdown 表格，直接貼進對話串就會渲染成表（含縮圖）。"""
+    if not results:
+        print("（沒有符合的 pose）")
+        return
+    print(f"找到 **{len(results)}** 張相關圖片（{mode}）：\n")
+    print("| 縮圖 | # | 描述 | 標籤 | 訊號 |")
+    print("|---|---|---|---|---|")
+    for r in results:
+        thumb = _abs_path(r.get("thumbnail_path"))
+        thumb_cell = f"![#{r['id']}]({thumb})" if thumb else "—"
+
+        signals = []
+        if "distance" in r:
+            signals.append(f"dist={r['distance']}")
+        if r["favorite"]:
+            signals.append("★")
+        if r["rating"]:
+            signals.append(f"{r['rating']}/5")
+
+        # tags 形如 "framing:全身"，表格裡只留值、用、串接，較好讀
+        tag_vals = [t.split(":", 1)[-1] for t in r["tags"]]
+        print(
+            f"| {thumb_cell} | {r['id']} | {_md_cell(r['description'])} "
+            f"| {_md_cell('、'.join(tag_vals)) or '—'} | {_md_cell(' '.join(signals)) or '—'} |"
+        )
+    print()
+    if mode == "claude":
+        print("> 以上是粗篩候選；已依語意排序，挑最貼近你描述的幾張即可。")
+
+
 def cmd_search(args) -> None:
     tag_pairs: list[tuple[str, str]] = []
     for kv in args.tag or []:
@@ -186,6 +231,8 @@ def cmd_search(args) -> None:
 
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
+    elif args.table:
+        _print_table(results, mode)
     else:
         _print_human(results, mode)
 
@@ -198,6 +245,8 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--knn", action="store_true", help="走 sqlite-vec 向量最近鄰（需庫裡有向量）")
     p.add_argument("--json", action="store_true", help="同時輸出機器可讀 JSON")
+    p.add_argument("--table", action="store_true",
+                   help="輸出 Markdown 表格（含縮圖），可直接貼進對話串渲染")
     p.add_argument("--db", default=None)
     p.add_argument("--data", default=None)
     args = p.parse_args()

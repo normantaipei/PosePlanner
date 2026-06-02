@@ -191,6 +191,21 @@ python3 scripts/add_pose.py pack \
        --db /tmp/poseplanner/library.db --data /tmp/poseplanner
    ```
    `QUERY` 以空白拆成多個關鍵字，對 description 做 AND 模糊比對（只是粗篩，真正的語意排序由你判斷）。
+   全身照之類的「取景」查詢用 `--tag framing=全身`；某角色的範例圖用 `--tag character=<角色>`
+   （配合自然語言 QUERY 收斂）。
+
+4. **把結果排成表貼進對話**（使用者要「找相關圖片印成一張表」時的收場）：
+   加 `--table` 讓 search.py 直接吐一張 **Markdown 表格**（縮圖 / 描述 / 標籤 / 訊號），
+   縮圖欄是縮圖檔的絕對路徑圖片，貼進對話串就會渲染成含圖的表。
+   ```bash
+   python3 scripts/search.py --tag framing=全身 --limit 12 --table \
+       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+   python3 scripts/search.py "雷電將軍 戰鬥姿" --tag character=雷電將軍 --table \
+       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+   ```
+   `--table` 是粗篩候選的呈現格式；**你仍要先讀 description 做語意排序、剔掉不貼近的**，
+   再把挑出來的幾張排成表回給使用者（可先 `--json` 拿候選自己挑、再手排表，或直接 `--table`
+   印完在話裡說明你保留/淘汰了哪些）。
 
 > 這份 `/tmp/poseplanner/library.db` 是**臨時**的、查完即丟——**不要**回傳到 Drive。
 > Drive 上永遠只維護 `fragments/`。
@@ -209,7 +224,8 @@ python3 scripts/add_pose.py pack \
   fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
 - `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；
   Twitter/IG 純標準庫，FB 走 gallery-dl + 瀏覽器 cookies）。**已實作**。
-- `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）。**已實作**。
+- `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--table` 印 Markdown
+  表格（含縮圖）直接貼進對話。**已實作**。
 - `scripts/vecdb.py`：sqlite-vec 載入層（挑平台二進位、必要時 re-exec 到可用 python）。
 - `scripts/update_profile.py`：重算審美畫像（Phase 2，未實作）
 - `scripts/make_plan.py`：產拍攝計劃書（Phase 4，未實作）
