@@ -7,7 +7,28 @@
   抓不到會自動 fallback 到 CDN）。
 - 沒有 npm / Vite / 打包步驟。建構腳本 `build.py` 只用 Python 標準庫。
 
-## 一鍵建構
+## 🚀 一鍵架設（全新空 VM）
+
+在一台**乾淨的 Ubuntu / Debian VM** 上，把後端 domain 與『讀取』token 當「後綴」帶上，貼這一行——
+Docker、git、python3、config.js、nginx 容器全自動搞定：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/web/bootstrap.sh \
+  | bash -s -- http://192.168.1.50:8000 <read_token>
+```
+
+它會：裝 Docker / git / python3 → clone repo → 跑 `build.py`（產 `config.js`、vendored Vue、測連線）
+→ 用 **nginx 容器**把純靜態的 `web/` 服務出去（`--restart unless-stopped`，開機自動起）→ 印出前端網址。
+
+> 🔌 **埠自動避讓**：預設從 8080 起，被占用會自動往上換（8081、8082…）。
+> 雲端 VM 記得到防火牆 / 安全群組放行那個 TCP 埠，否則外部連不進來。
+>
+> 後端沒設 token（純內網信任）時，token 留空：`… | bash -s -- http://192.168.1.50:8000`。
+> 也可改用環境變數：`… | BASE_URL=http://192.168.1.50:8000 TOKEN=<read_token> bash`。
+> 換後端 / 換 token：重跑同一行帶新參數即可（覆蓋 `config.js`、重啟容器）。
+> 可用環境變數客製：`POSEPLANNER_DIR`（安裝目錄）、`WEB_PORT`（起始埠，預設 8080）。
+
+## 一鍵建構（本機 / 已有環境）
 
 ```bash
 # 互動式：會問你 server domain 與『讀取』token
