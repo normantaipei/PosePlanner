@@ -12,7 +12,8 @@ description: >-
 你要看圖、產出敘述與標籤、入庫。每一張入庫的圖都是一個正向的審美訊號。
 
 ## 何時用這個 skill
-使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses…等。
+使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses、找圖、
+**刪圖 / 把這張從庫移除 / delete**…等。
 通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖），
 **或丟一個 Instagram / Twitter(X) 貼文網址**（見下方「社群貼文入庫」）。
 
@@ -274,6 +275,53 @@ server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description �
 > 進階：若 fragment 裡帶了向量（manifest 給過 `embedding`），可加 `--knn` 走 sqlite-vec
 > 向量最近鄰。一般情況用預設模式即可，語意交給你來挑。
 
+## 刪除（從庫移除圖）
+
+使用者說「刪掉這張 / 這張不要了 / 移除剛剛那幾張 / delete #3」時用這個流程。
+
+> 🔴 **刪除的鐵則：一定要先經使用者明確同意才能真的刪。**
+> 1. **先定位**：刪除一律以「搜尋表上的 `#` 或 content_hash」指定。請先照上面的檢索流程把候選撈出來、
+>    把要刪的那幾張**連縮圖渲染在對話裡**給使用者看。
+> 2. **先 dry-run**：跑下面的指令（**不要**帶 `--confirm`）。它只會列出「將刪什麼」，不動任何資料。
+> 3. **明確徵求同意**：把 dry-run 列出的清單 + 縮圖一起呈現，**等使用者清楚說「對，刪」**才往下。
+>    使用者沒明確答應、或語氣含糊（「好像不太喜歡」）就**停在這裡問清楚**，不要自己決定刪。
+> 4. **才執行**：得到同意後，重跑同一條指令並加 `--confirm`。
+
+### 🅐 drive 模式 — 產一個 tombstone fragment 上傳
+drive 模式的庫是 Drive 上 append-only 的 fragments，連接器**不能刪檔**，所以「刪一張圖」=
+上傳一個只記 content_hash 的小 **tombstone**；之後搜尋（`compact`）重建臨時庫時就會自動略過它們。
+
+```bash
+# 前提：剛剛搜尋時已 compact 出 /tmp/poseplanner/library.db，用同一個 --db 對照 id。
+# 1) dry-run：只預覽，不產生任何東西
+python3 scripts/add_pose.py forget --ids 3,7 \
+    --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+# 2) 把預覽的圖渲染給使用者、取得明確同意後，才加 --confirm 產出 tombstone
+python3 scripts/add_pose.py forget --ids 3,7 --confirm \
+    --out /tmp/poseplanner/outbox/ \
+    --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+```
+- `--ids` 用搜尋表上的 `#`；也可用 `--hash <content_hash 或前綴>` 直接指定。
+- ⚠ id 是**那一次 compact** 出來的臨時編號，下次重建會變——所以**刪除要用「同一個 library.db」**，
+  別拿舊 id 去刪。找不到的 id/hash 會明確列出來，別硬刪。
+- `--confirm` 會在 `outbox/` 產出 `tomb-<時間戳>.zip`。**把它跟一般 fragment 一樣上傳到 Drive 的
+  `PosePlanner/fragments/`**（`create_file`，`contentMimeType=application/zip`，
+  `disableConversionToGoogleType=true`）。上傳成功後那幾張在日後搜尋就不再出現。
+- 上傳失敗就**明講**、保留該 zip，別讓使用者以為刪掉了。
+
+> tombstone 採「刪除優先（tombstone wins）」：只要有 tombstone 記到某張的 hash，`compact` 一律不收它。
+> 萬一之後想救回某張（罕見），請使用者到 Drive 的 `fragments/` 手動把那個 `tomb-*.zip` 刪掉即可。
+
+### 🅑 selfhost 模式 — 直接打 server 刪
+私有 DB 一直在線、id 是穩定的，直接刪即可（連帶清 tags/creators + 磁碟原圖縮圖）：
+```bash
+# 1) dry-run 預覽
+python3 scripts/backend.py delete --ids 3,7
+# 2) 取得使用者明確同意後才加 --confirm
+python3 scripts/backend.py delete --ids 3,7 --confirm
+```
+失敗（連不到 server、token 非讀寫）就**據實回報**，別假裝刪好了。
+
 ## 注意
 - 不要重複入庫：以 content_hash 去重，但你也別把同一張圖在 manifest 裡列兩次。
 - 看不清楚或不是 cosplay 的圖，先問使用者，不要硬塞標籤。
@@ -283,9 +331,11 @@ server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description �
 ## 相關腳本
 - `scripts/backend.py`：**儲存後端選擇與私有 DB 客戶端**（純標準庫）。`status` / `setup` /
   `set`（drive｜selfhost）/ `ingest`（selfhost：原圖逐張送 /images）/ `push`（送 fragment zip）/
-  `search`（打 server /search）/ `image`（單張）。第一次執行先用它選後端。**已實作**。
+  `search`（打 server /search）/ `delete`（selfhost：刪 pose，預設 dry-run、`--confirm` 才刪）/
+  `image`（單張）。第一次執行先用它選後端。**已實作**。
 - `scripts/add_pose.py`：核心。`pack`（看圖後打包 fragment，不寫庫）/ `compact`（搜尋時把
-  fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
+  fragments 合併成臨時庫，去重；會套用 tombstone 刪除）/ `forget`（drive：把選中的圖打包成
+  tombstone，預設 dry-run、`--confirm` 才產出）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
 - `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；
   Twitter/IG 純標準庫，FB 走 gallery-dl + 瀏覽器 cookies）。**已實作**。
 - `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--json` 拿候選、

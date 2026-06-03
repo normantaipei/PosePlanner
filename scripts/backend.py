@@ -319,6 +319,64 @@ def cmd_push(args) -> None:
     print(f"OK（私有 DB 回放）：{parsed}")
 
 
+def _parse_ids(chunks: list | None) -> list[int]:
+    ids: list[int] = []
+    for chunk in chunks or []:
+        for tok in chunk.replace("，", ",").split(","):
+            tok = tok.strip().lstrip("#")
+            if not tok:
+                continue
+            if not tok.isdigit():
+                raise SystemExit(f"--ids 只能是數字 id（逗號分隔），收到：{tok}")
+            ids.append(int(tok))
+    return ids
+
+
+def cmd_delete(args) -> None:
+    """selfhost：刪一或多張 pose。預設 dry-run（只列出將刪什麼），--confirm 才真的刪。"""
+    sh = require_selfhost(load_config())
+    ids = _parse_ids(args.ids)
+    if not ids:
+        raise SystemExit("請用 --ids 指定要刪哪幾張（搜尋表上的 #，逗號分隔）。")
+    base = sh["base_url"].rstrip("/")
+
+    # 先抓每張摘要供確認（找不到的就略過並提示）。
+    targets: list[dict] = []
+    for pid in ids:
+        status, raw = _request("GET", f"{base}/poses/{pid}", headers=_auth_headers(sh))
+        if status == 404:
+            print(f"  ⚠ 找不到 #{pid}，略過"); continue
+        if status >= 400:
+            raise SystemExit(f"查 #{pid} 失敗（{status}）：{raw.decode(errors='ignore')[:200]}")
+        try:
+            targets.append(json.loads(raw.decode("utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            print(f"  ⚠ #{pid} 回傳非預期，略過")
+    if not targets:
+        raise SystemExit("沒有可刪的目標。")
+
+    print(f"\n將刪除 {len(targets)} 張（私有 DB：原圖 + metadata 永久移除）：")
+    for t in targets:
+        tag_vals = "、".join(tg.split(":", 1)[-1] for tg in t.get("tags", []))
+        print(f"  • #{t['id']}  {(t.get('content_hash') or '')[:12]}  {(t.get('description') or '')[:40]}")
+        if tag_vals:
+            print(f"      tags: {tag_vals}")
+
+    if not args.confirm:
+        print("\n— 這是預覽（dry-run），還沒刪任何東西。")
+        print("  請先把上面這些圖渲染給使用者確認；得到明確同意後，再加 --confirm 重跑。")
+        return
+
+    deleted = errors = 0
+    for t in targets:
+        status, raw = _request("DELETE", f"{base}/poses/{t['id']}", headers=_auth_headers(sh))
+        if status >= 400:
+            errors += 1; print(f"  ✗ 刪 #{t['id']} 失敗（{status}）：{raw.decode(errors='ignore')[:160]}")
+        else:
+            deleted += 1; print(f"  ✓ 已刪 #{t['id']}（{(t.get('content_hash') or '')[:8]}）")
+    print(f"\n刪除完成（私有 DB）：成功 {deleted}，失敗 {errors}。")
+
+
 def _md_cell(text: str) -> str:
     return (text or "").replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").strip()
 
@@ -427,6 +485,13 @@ def main() -> None:
     pp = sub.add_parser("push", help="selfhost：POST 一個 fragment zip 到 /fragments")
     pp.add_argument("--fragment", required=True)
     pp.set_defaults(func=cmd_push)
+
+    pd = sub.add_parser("delete", help="selfhost：刪一或多張 pose（預設 dry-run，--confirm 才刪）")
+    pd.add_argument("--ids", action="append", required=True,
+                    help="要刪的 pose id（搜尋表上的 #，逗號分隔，可重複）")
+    pd.add_argument("--confirm", action="store_true",
+                    help="確認刪除：實際送 DELETE（沒給就只做 dry-run 預覽）")
+    pd.set_defaults(func=cmd_delete)
 
     psr = sub.add_parser("search", help="selfhost：對 server /search 粗篩候選")
     psr.add_argument("query", nargs="?", default="")

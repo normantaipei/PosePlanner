@@ -429,3 +429,56 @@ def update_pose_tags(
         ).fetchall()
     ]
     return {"added": added, "removed": removed, "tags": tags}
+
+
+def get_pose(conn: psycopg.Connection, pose_id: int) -> dict | None:
+    """取一張 pose 的摘要（給刪除前的 dry-run 確認用）。不存在回 None。"""
+    row = conn.execute(
+        "SELECT id, content_hash, image_path, thumbnail_path, description, favorite, rating "
+        "FROM poses WHERE id=%s", (pose_id,)
+    ).fetchone()
+    if not row:
+        return None
+    pid, ch, image_path, thumb, desc, fav, rating = row
+    tags = [
+        f"{cat}:{name}"
+        for cat, name in conn.execute(
+            "SELECT t.category, t.name FROM pose_tags pt JOIN tags t ON t.id=pt.tag_id "
+            "WHERE pt.pose_id=%s ORDER BY t.category", (pose_id,)
+        ).fetchall()
+    ]
+    return {
+        "id": pid, "content_hash": ch, "image_path": image_path,
+        "thumbnail_path": thumb, "description": desc, "favorite": bool(fav),
+        "rating": rating, "tags": tags, "creators": pose_creators(conn, pose_id),
+    }
+
+
+def delete_pose(conn: psycopg.Connection, pose_id: int) -> dict | None:
+    """刪一張 pose。pose_tags / pose_creators 靠 FK ON DELETE CASCADE 連帶清掉；
+    tags.usage_count 在刪 pose_tags 前先補扣。回傳被刪 pose 的 {id, content_hash,
+    image_path, thumbnail_path}（給呼叫端清磁碟檔），不存在回 None。"""
+    row = conn.execute(
+        "SELECT id, content_hash, image_path, thumbnail_path FROM poses WHERE id=%s",
+        (pose_id,),
+    ).fetchone()
+    if not row:
+        return None
+    pid, ch, image_path, thumb = row
+    # CASCADE 不會幫忙維護 usage_count，先把這張用到的 tag 計數扣回來。
+    conn.execute(
+        "UPDATE tags SET usage_count = GREATEST(usage_count - 1, 0) WHERE id IN "
+        "(SELECT tag_id FROM pose_tags WHERE pose_id=%s)", (pose_id,)
+    )
+    conn.execute("DELETE FROM poses WHERE id=%s", (pose_id,))
+    return {"id": pid, "content_hash": ch, "image_path": image_path, "thumbnail_path": thumb}
+
+
+def delete_pose_by_hash(conn: psycopg.Connection, content_hash: str) -> dict | None:
+    """依 content_hash 刪一張 pose（給 tombstone fragment 回放用）。不存在回 None。"""
+    row = conn.execute(
+        "SELECT id FROM poses WHERE content_hash=%s", ((content_hash or "").strip(),)
+    ).fetchone()
+    if not row:
+        return None
+    return delete_pose(conn, row[0])

@@ -91,6 +91,12 @@ EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 # 創作者沒指定角色時的預設 role；常見值：model / photographer / retoucher…
 DEFAULT_CREATOR_ROLE = "creator"
 
+# Tombstone（刪除）fragment 的標記。drive 模式的庫是 Drive 上 append-only 的 fragments，
+# 連接器只能新建、不能刪檔，所以「刪一張圖」= 上傳一個只記 content_hash 的小 tombstone zip；
+# compact 重建臨時庫時看到 tombstone 就把那些 content_hash 的圖移除（tombstone wins）。
+# 正常 fragment 的 manifest 是「陣列」，tombstone 的 manifest 是帶這個 op 的「物件」，不會撞型。
+TOMBSTONE_OP = "delete"
+
 
 # ── taxonomy 載入 ───────────────────────────────────────────────────
 def load_taxonomy() -> dict:
@@ -374,6 +380,7 @@ class Stats:
     def __init__(self):
         self.added = 0
         self.dup = 0
+        self.removed = 0      # compact 時因 tombstone 而被略過/移除的張數
         self.new_tags = 0
         self.errors = 0
         self.added_chars: set[str] = set()
@@ -519,6 +526,8 @@ def build_summary(conn: sqlite3.Connection, st: Stats) -> str:
     parts = [f"今天 +{st.added} 張"]
     if st.dup:
         parts.append(f"重複 {st.dup} 張")
+    if st.removed:
+        parts.append(f"依 tombstone 移除 {st.removed} 張")
     if st.errors:
         parts.append(f"失敗 {st.errors} 張")
     if st.added_chars:
@@ -705,6 +714,10 @@ def cmd_compact(args) -> None:
     st = Stats()
     try:
         with tempfile.TemporaryDirectory() as td:
+            # ── Pass 1：解開所有來源、讀 manifest，把正常 fragment 與 tombstone 分流。
+            #    tombstone 的 content_hash 先全部收進 dead，正常筆稍後一律跳過/移除這些 hash。
+            normal: list[tuple[str, Path, list]] = []   # (label, frag_dir, entries)
+            dead: set[str] = set()
             for src in sources:
                 if src.suffix.lower() == ".zip":
                     frag_dir = Path(td) / src.stem
@@ -719,15 +732,34 @@ def cmd_compact(args) -> None:
                     label = str(src.relative_to(frag_root)) if frag_root.is_dir() else src.name
                 if not mf.exists():
                     print(f"  ⚠ 略過（zip 內無 manifest.json）：{src.name}"); continue
-                entries = json.loads(mf.read_text(encoding="utf-8"))
-                if not isinstance(entries, list):
+                manifest = json.loads(mf.read_text(encoding="utf-8"))
+                if isinstance(manifest, dict) and manifest.get("poseplanner_op") == TOMBSTONE_OP:
+                    hashes = [h.strip() for h in (manifest.get("content_hashes") or []) if str(h).strip()]
+                    dead.update(hashes)
+                    note = manifest.get("note")
+                    print(f"⊘ tombstone {label}：標記刪除 {len(hashes)} 筆"
+                          + (f"（{note}）" if note else ""))
+                    continue
+                if not isinstance(manifest, list):
                     print(f"  ⚠ 略過非陣列 fragment：{label}"); continue
+                normal.append((label, frag_dir, manifest))
+
+            # ── Pass 2：回放正常筆，content_hash 落在 dead 的一律不入。
+            for label, frag_dir, entries in normal:
                 print(f"▸ {label}（{len(entries)} 筆）")
                 for entry in entries:
+                    if (entry.get("content_hash") or "").strip() in dead:
+                        st.removed += 1; continue
                     try:
                         compact_one(conn, entry, dims, frag_dir, st)
                     except Exception as e:
                         print(f"  ✗ 失敗：{e}"); st.errors += 1
+
+            # 保險：若 db 是重用的（非用完即焚），把已存在卻被 tombstone 的列也刪掉。
+            # CASCADE + trg_poses_del_vec 會連帶清掉 pose_tags / pose_creators / 向量。
+            for h in dead:
+                conn.execute("DELETE FROM poses WHERE content_hash=?", (h,))
+
         summary = build_summary(conn, st)
         conn.execute(
             "INSERT INTO ingest_log(n_added, n_dup, n_new_tags, summary) VALUES (?,?,?,?)",
@@ -737,6 +769,133 @@ def cmd_compact(args) -> None:
     finally:
         conn.close()
     print("\n" + summary)
+
+
+# ── 刪除（drive 模式）：產一個 tombstone fragment ───────────────────
+# 兩段式安全閥：預設只「列出將刪什麼」(dry-run)，不寫任何檔；要真的產 tombstone
+# 必須再加 --confirm。SKILL 流程要求 Claude 先把這些圖渲染給使用者看、明確同意後才 --confirm。
+def _resolve_targets(conn, ids: list[int], hashes: list[str]) -> tuple[list[dict], list[str]]:
+    """把使用者點的 id / hash 對應回臨時庫裡的 pose（含 content_hash + 敘述）。
+    回傳 (targets, missing)；targets 每筆 {id?, content_hash, description, tags}。"""
+    targets: list[dict] = []
+    seen: set[str] = set()
+    missing: list[str] = []
+
+    def add_row(row, label):
+        if not row:
+            missing.append(label); return
+        pid, ch, desc = row
+        if ch in seen:
+            return
+        seen.add(ch)
+        targets.append({
+            "id": pid, "content_hash": ch,
+            "description": desc or "", "tags": _tags_of(conn, pid),
+        })
+
+    for pid in ids:
+        add_row(
+            conn.execute(
+                "SELECT id, content_hash, description FROM poses WHERE id=?", (pid,)
+            ).fetchone(),
+            f"#{pid}",
+        )
+    for h in hashes:
+        h = h.strip()
+        if not h:
+            continue
+        if h in seen:
+            continue
+        # 允許給「前綴」（搜尋表常只顯示 hash 前 8 碼）
+        add_row(
+            conn.execute(
+                "SELECT id, content_hash, description FROM poses WHERE content_hash=? "
+                "OR content_hash LIKE ? LIMIT 1", (h, h + "%"),
+            ).fetchone(),
+            h,
+        )
+    return targets, missing
+
+
+def _tags_of(conn, pose_id: int) -> list[str]:
+    return [
+        f"{cat}:{name}"
+        for cat, name in conn.execute(
+            "SELECT t.category, t.name FROM pose_tags pt "
+            "JOIN tags t ON t.id=pt.tag_id WHERE pt.pose_id=? ORDER BY t.category",
+            (pose_id,),
+        )
+    ]
+
+
+def cmd_forget(args) -> None:
+    """drive 模式刪除：把選中的圖打包成一個 tombstone fragment（上傳到 Drive fragments/ 後，
+    日後 compact 重建臨時庫就不會再出現它們）。預設 dry-run，--confirm 才真的產出 zip。"""
+    if not DB_PATH.exists():
+        raise SystemExit(
+            "找不到臨時庫，無法對照要刪哪幾張。請先照搜尋流程 compact 出 library.db，"
+            "用同一個 --db 指過來。"
+        )
+    ids: list[int] = []
+    for chunk in args.ids or []:
+        for tok in chunk.replace("，", ",").split(","):
+            tok = tok.strip().lstrip("#")
+            if tok:
+                if not tok.isdigit():
+                    raise SystemExit(f"--ids 只能是數字 id（逗號分隔），收到：{tok}")
+                ids.append(int(tok))
+    hashes: list[str] = []
+    for chunk in args.hash or []:
+        hashes += [h for h in chunk.replace("，", ",").split(",") if h.strip()]
+    if not ids and not hashes:
+        raise SystemExit("請用 --ids（搜尋表上的 #）或 --hash 指定要刪哪幾張。")
+
+    conn = connect()
+    try:
+        targets, missing = _resolve_targets(conn, ids, hashes)
+    finally:
+        conn.close()
+
+    if missing:
+        print("⚠ 這些在臨時庫裡找不到（id 可能來自別次 compact，或 hash 打錯）：" + "、".join(missing))
+    if not targets:
+        raise SystemExit("沒有可刪的目標——請確認 id/hash 來自『這次搜尋』compact 出的同一個庫。")
+
+    print(f"\n將刪除 {len(targets)} 張（drive：產 tombstone，日後搜尋就不再出現）：")
+    for t in targets:
+        print(f"  • #{t['id']}  {t['content_hash'][:12]}  {t['description'][:40]}")
+        if t["tags"]:
+            print(f"      tags: {'、'.join(tg.split(':', 1)[-1] for tg in t['tags'])}")
+
+    if not args.confirm:
+        print("\n— 這是預覽（dry-run），還沒有刪任何東西，也還沒產生 tombstone。")
+        print("  請先把上面這些圖渲染給使用者確認；得到明確同意後，再加 --confirm 重跑這條指令。")
+        return
+
+    if not args.out:
+        raise SystemExit("--confirm 需要 --out 指定 tombstone 輸出路徑（.zip 或資料夾）。")
+    out_arg = Path(args.out).expanduser()
+    if out_arg.suffix.lower() == ".zip":
+        out_zip = out_arg
+    else:
+        out_arg.mkdir(parents=True, exist_ok=True)
+        out_zip = out_arg / f"tomb-{datetime.now():%Y%m%dT%H%M%S}.zip"
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "poseplanner_op": TOMBSTONE_OP,
+        "content_hashes": [t["content_hash"] for t in targets],
+        "note": args.note or f"刪除 {len(targets)} 張（經使用者同意）",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+    size_kb = out_zip.stat().st_size / 1024
+    print(f"\n✓ 已產生 tombstone：{out_zip}（{len(targets)} 筆，{size_kb:.1f} KB）")
+    print("  ↳ 把這個 zip 跟一般 fragment 一樣上傳到 Drive 的 PosePlanner/fragments/")
+    print("    （create_file，contentMimeType=application/zip，disableConversionToGoogleType=true）。")
+    print("  上傳成功後，這幾張圖在日後的搜尋（compact）就不會再出現。")
 
 
 def cmd_init(args) -> None:
@@ -813,6 +972,19 @@ def main() -> None:
     pcc.add_argument("--fragments", required=True,
                      help="含若干 fragment 的根目錄或單一 zip（遞迴找 *.zip / manifest.json）")
     pcc.set_defaults(func=cmd_compact)
+
+    pf = sub.add_parser("forget", parents=[parent],
+                        help="drive 模式刪除：把選中的圖打包成 tombstone（預設 dry-run，--confirm 才產出）")
+    pf.add_argument("--ids", action="append",
+                    help="要刪的 pose id（搜尋表上的 #，逗號分隔，可重複）")
+    pf.add_argument("--hash", action="append",
+                    help="直接指定 content_hash（可給前綴；逗號分隔，可重複）")
+    pf.add_argument("--out", default=None,
+                    help="tombstone .zip 路徑或輸出資料夾（--confirm 時必填；自動命名 tomb-<時間戳>.zip）")
+    pf.add_argument("--note", help="這次刪除的備註，會寫進 tombstone")
+    pf.add_argument("--confirm", action="store_true",
+                    help="確認刪除：實際產出 tombstone zip（沒給就只做 dry-run 預覽）")
+    pf.set_defaults(func=cmd_forget)
 
     sub.add_parser("init", parents=[parent], help="建庫 + seed").set_defaults(func=cmd_init)
     sub.add_parser("stats", parents=[parent], help="看庫狀態").set_defaults(func=cmd_stats)

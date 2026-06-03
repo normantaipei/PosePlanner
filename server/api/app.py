@@ -13,6 +13,8 @@
   POST /fragments  (multipart)      收一個 pack 出來的 fragment zip，回放併庫（相容雲端格式）
   PUT  /poses/{id}/tags  (json)     改一張 pose 的 tags（整批替換 / 只新增 / 只移除）
   PUT  /poses/{id}/creators (json)  改一張 pose 的創作者（模特兒 / 攝影師…；整批替換 / 增 / 移除）
+  GET  /poses/{id}                  取一張 pose 摘要（刪除前 dry-run 確認用）
+  DELETE /poses/{id}                刪一張 pose（連帶清 tags/creators + 磁碟原圖縮圖；需讀寫 token）
   GET  /search?q=&tag=&limit=       tag + 關鍵字粗篩候選（語意排序交給 Claude）
   GET  /thumbs/{name}               取縮圖（讀取 token 即可，公開找圖頁用這個）
   GET  /images/{name}               取『原圖』——需讀寫 token（防整庫高清被搬走）
@@ -249,6 +251,25 @@ async def upload_fragment(
     if "manifest.json" not in names:
         raise HTTPException(status_code=400, detail="zip 內缺 manifest.json")
     entries = json.loads(zf.read("manifest.json").decode("utf-8"))
+
+    # tombstone fragment（drive 模式的刪除單位）：manifest 是帶 op 的物件，回放即「刪除」。
+    if isinstance(entries, dict) and entries.get("poseplanner_op") == "delete":
+        hashes = [h.strip() for h in (entries.get("content_hashes") or []) if str(h).strip()]
+        removed = 0
+        with db.pool().connection() as conn:
+            for h in hashes:
+                info = db.delete_pose_by_hash(conn, h)
+                if info is None:
+                    continue
+                removed += 1
+                for rel in (info.get("image_path"), info.get("thumbnail_path")):
+                    if rel:
+                        try:
+                            (DATA_DIR / rel).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+        return JSONResponse({"tombstone": True, "removed": removed, "requested": len(hashes)})
+
     if not isinstance(entries, list):
         raise HTTPException(status_code=400, detail="manifest.json 應是陣列")
 
@@ -364,6 +385,36 @@ async def update_pose_creators(
     if result is None:
         raise HTTPException(status_code=404, detail="找不到這張 pose")
     return JSONResponse({"id": pose_id, **result})
+
+
+@app.get("/poses/{pose_id}")
+def get_pose(pose_id: int, _: None = Depends(require_read)) -> JSONResponse:
+    """取一張 pose 的摘要（給刪除前的 dry-run 確認用）。"""
+    with db.pool().connection() as conn:
+        pose = db.get_pose(conn, pose_id)
+    if pose is None:
+        raise HTTPException(status_code=404, detail="找不到這張 pose")
+    return JSONResponse(pose)
+
+
+@app.delete("/poses/{pose_id}")
+def delete_pose(pose_id: int, _: None = Depends(require_write)) -> JSONResponse:
+    """刪一張 pose（需讀寫 token）。連帶清 pose_tags / pose_creators（FK CASCADE）、
+    補扣 tag usage_count，並把磁碟上的原圖 + 縮圖一併刪掉（檔名以 content_hash 命名、
+    一圖一檔，所以安全）。回傳 {id, content_hash, deleted: true}。"""
+    with db.pool().connection() as conn:
+        info = db.delete_pose(conn, pose_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="找不到這張 pose")
+    # 清磁碟檔（best-effort，刪不掉不影響 DB 已刪的事實）。
+    for rel in (info.get("image_path"), info.get("thumbnail_path")):
+        if not rel:
+            continue
+        try:
+            (DATA_DIR / rel).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return JSONResponse({"id": info["id"], "content_hash": info["content_hash"], "deleted": True})
 
 
 @app.get("/search")
