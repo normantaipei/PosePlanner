@@ -394,9 +394,18 @@ def search(request: Request, q: str = "", tag: list[str] | None = None, limit: i
             f"HAVING COUNT(DISTINCT t.category||':'||t.name) = %s)"
         )
         params += sub_params + [len(tag_pairs)]
+    # 自由文字：每個關鍵字需命中 description／tag 名稱(或分類)／創作者名(或 handle)其一，
+    # 關鍵字之間維持 AND。（前端搜尋框 placeholder 承諾可搜「作品、創作者」，故不只查 description）
     for kw in q.split():
-        clauses.append("p.description LIKE %s")
-        params.append(f"%{kw}%")
+        like = f"%{kw}%"
+        clauses.append(
+            "(p.description ILIKE %s "
+            "OR p.id IN (SELECT pt.pose_id FROM pose_tags pt JOIN tags t ON t.id=pt.tag_id "
+            "WHERE t.name ILIKE %s OR t.category ILIKE %s) "
+            "OR p.id IN (SELECT pc.pose_id FROM pose_creators pc JOIN creators c ON c.id=pc.creator_id "
+            "WHERE c.name ILIKE %s OR c.handle ILIKE %s))"
+        )
+        params += [like, like, like, like, like]
 
     sql = "SELECT p.id, p.image_path, p.thumbnail_path, p.description, p.favorite, p.rating FROM poses p"
     if clauses:
