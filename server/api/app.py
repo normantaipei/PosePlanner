@@ -30,6 +30,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import db
@@ -46,6 +47,20 @@ RO_TOKEN = os.environ.get("POSEPLANNER_READ_TOKEN", "").strip()
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"}
 
 app = FastAPI(title="PosePlanner 私有 DB", version="1.0")
+
+# ── CORS ────────────────────────────────────────────────────────────
+# 前端搜尋頁（web/）多半跟 server 不同源，瀏覽器的 fetch(/search)、fetch(/stats)
+# 需要 server 回 CORS 標頭才讀得到。預設放行所有來源（讀取仍受 token 把關）；
+# 要收斂時設 POSEPLANNER_CORS_ORIGINS=「逗號分隔的來源清單」，例如
+#   POSEPLANNER_CORS_ORIGINS=https://pose.example.com,http://192.168.1.50:8080
+_cors_env = os.environ.get("POSEPLANNER_CORS_ORIGINS", "*").strip()
+_cors_origins = ["*"] if _cors_env in ("", "*") else [o.strip() for o in _cors_env.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET"],          # 前端只讀（/search /stats /thumbs /images）
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
@@ -323,10 +338,13 @@ async def update_pose_creators(
 
 
 @app.get("/search")
-def search(q: str = "", tag: list[str] | None = None, limit: int = 20,
+def search(q: str = "", tag: list[str] | None = None, limit: int = 20, offset: int = 0,
           _: None = Depends(require_read)) -> JSONResponse:
     """tag（category=name，可多個 AND）+ 關鍵字（對 description 做 AND LIKE）粗篩候選。
-    語意排序由 Claude 讀 description 完成——和 SQLite 版 search.py 同設計。"""
+    語意排序由 Claude 讀 description 完成——和 SQLite 版 search.py 同設計。
+    offset 供前端 feed 無限捲動分頁用（從第 offset 筆之後再取 limit 筆）。"""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     tag = tag or []
     tag_pairs = []
     for kv in tag:
@@ -353,8 +371,10 @@ def search(q: str = "", tag: list[str] | None = None, limit: int = 20,
     sql = "SELECT p.id, p.image_path, p.thumbnail_path, p.description, p.favorite, p.rating FROM poses p"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY p.favorite DESC, p.rating IS NULL, p.rating DESC, p.created_at DESC LIMIT %s"
+    sql += (" ORDER BY p.favorite DESC, p.rating IS NULL, p.rating DESC, p.created_at DESC "
+            "LIMIT %s OFFSET %s")
     params.append(limit)
+    params.append(offset)
 
     out = []
     with db.pool().connection() as conn:

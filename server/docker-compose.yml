@@ -44,6 +44,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-poseplanner}
       POSEPLANNER_TOKEN: ${POSEPLANNER_TOKEN:-}
       POSEPLANNER_READ_TOKEN: ${POSEPLANNER_READ_TOKEN:-}
+      POSEPLANNER_CORS_ORIGINS: ${POSEPLANNER_CORS_ORIGINS:-*}
       POSEPLANNER_DATA: /data
     volumes:
       - media:/data

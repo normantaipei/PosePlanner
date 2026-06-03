@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PosePlanner — 找圖</title>
+  <link rel="stylesheet" href="style.css">
+
+  <!-- 設定：由 build.py 產生，內含 server domain 與『讀取』token。
+       沒跑 build.py 時載入失敗，app.js 會在畫面上提示。 -->
+  <script src="config.js" onerror="window.__noConfig=true"></script>
+
+  <!-- Vue 3（含模板編譯器）。優先用 build.py vendored 的本機檔（離線可跑）；
+       抓不到就 fallback 到 CDN。 -->
+  <script src="vendor/vue.global.prod.js"
+          onerror="(function(s){var c=document.createElement('script');c.src='https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js';c.onerror=function(){window.__noVue=true};document.head.appendChild(c);})()"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="app.js"></script>
+</body>
+</html>

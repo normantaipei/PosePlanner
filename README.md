@@ -164,6 +164,18 @@ Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可�
 
 細節（API、備份、還原）見 [server/README.md](server/README.md)。
 
+#### 🔎（選配）找圖前端：社群媒體風格的搜尋頁
+
+私有 DB 模式下，可另外架一個**純靜態的 Vue 搜尋頁**給人用瀏覽器找圖（進頁先給推薦、
+搜尋框打字即時找）。一鍵建構，會問你 server domain 與**讀取** token：
+
+```bash
+python3 web/build.py --serve --port 8080
+#   → 瀏覽器開 http://localhost:8080/
+```
+
+細節見 [web/README.md](web/README.md)。
+
 ### 向量引擎（已 vendored，不需安裝）
 語意 KNN 用的 [sqlite-vec](https://github.com/asg017/sqlite-vec) 二進位已放在
 `vendor/sqlite-vec/`（mac/linux），**不需 pip**。唯一需求是執行的 Python 其 sqlite3
@@ -238,6 +250,10 @@ poseplanner/
 │   ├── docker-compose.yml  # PostgreSQL（pgvector）+ 圖片接收服務
 │   ├── api/                # FastAPI：/images /fragments /search …
 │   └── db/schema.sql       # Postgres 結構
+├── web/                  # 找圖前端（Vue 3，純靜態、社群媒體風格的搜尋頁）
+│   ├── build.py            # 一鍵建構：問 domain + 讀取 token → 產 config.js（可 --serve）
+│   ├── index.html / app.js / style.css
+│   └── vendor/             # build.py vendored 的 Vue（不進版控）
 └── data/
     ├── library.db        # SQLite + sqlite-vec（drive 模式臨時庫，可攜帶、可分享）
     ├── config.json       # 選的後端（不進版控，含 selfhost token）

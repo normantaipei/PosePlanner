@@ -233,3 +233,8 @@ server/.env
 !vendor/**
 !vendor/sqlite-vec/*.so
 !vendor/sqlite-vec/*.dylib
+
+# 前端：build.py 產生的設定（含『讀取』token）與 vendored 的 Vue 不進版控。
+# 放最後，蓋過上面 !vendor/ 對 web/vendor/ 的誤放行。
+web/config.js
+web/vendor/
