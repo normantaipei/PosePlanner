@@ -31,6 +31,26 @@ rand_hex() {  # 32 hex 字元，優先 openssl，退而用 /dev/urandom
   else head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; fi
 }
 
+port_in_use() {  # 這個 host 上有沒有人在 listen 這個埠（含其他 docker 容器發布的）
+  local p="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}\$"
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    return 1  # 偵測不了就當沒占用，交給 compose 自己報錯
+  fi
+}
+
+find_free_port() {  # 從 $1 起往上找第一個沒被占用的埠
+  local start="$1" cand i
+  for i in $(seq 0 50); do
+    cand=$((start + i))
+    if ! port_in_use "$cand"; then echo "$cand"; return 0; fi
+  done
+  echo "$start"  # 找不到就回原值，讓 compose 自己報錯
+}
+
 # ── 1. Docker ───────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
   log "安裝 Docker（官方 get.docker.com）…"
@@ -70,9 +90,21 @@ fi
 
 cd "$DIR/server"
 
-# ── 3. .env（亂數密鑰）──────────────────────────────────────────────
+# ── 3. 決定對外埠 + .env（亂數密鑰）─────────────────────────────────
+# 埠來源優先序：既有 .env > 自動避讓（從 API_PORT 起找沒被占用的）。
+# 這樣使用者的伺服器若已站了 8000（或你指定的埠），會自動往上換一個，不會撞車。
+if [ -f .env ] && grep -qE '^API_PORT=' .env; then
+  PORT="$(grep -E '^API_PORT=' .env | cut -d= -f2- | tr -d ' \r')"
+  log "server/.env 已存在，沿用其中的對外埠 ${PORT}。"
+else
+  PORT="$(find_free_port "$API_PORT")"
+  if [ "$PORT" != "$API_PORT" ]; then
+    log "埠 ${API_PORT} 已被占用，自動改用 ${PORT}。（要指定別的：API_PORT=<埠> 再跑一次）"
+  fi
+fi
+
 if [ ! -f .env ]; then
-  log "產生 server/.env（亂數密碼與 token）…"
+  log "產生 server/.env（亂數密碼與 token，對外埠 ${PORT}）…"
   PW="$(rand_hex)"
   TOKEN="$(rand_hex)$(rand_hex)"
   cat > .env <<EOF
@@ -80,10 +112,8 @@ POSTGRES_USER=poseplanner
 POSTGRES_PASSWORD=${PW}
 POSTGRES_DB=poseplanner
 POSEPLANNER_TOKEN=${TOKEN}
-API_PORT=${API_PORT}
+API_PORT=${PORT}
 EOF
-else
-  log "server/.env 已存在，沿用既有設定。"
 fi
 TOKEN="$(grep -E '^POSEPLANNER_TOKEN=' .env | cut -d= -f2-)"
 
@@ -94,23 +124,23 @@ $DOCKER_SUDO $COMPOSE up -d --build
 # ── 5. 健康檢查 + 連線資訊 ─────────────────────────────────────────
 log "等服務起來…"
 for i in $(seq 1 30); do
-  if curl -fsS "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then break; fi
+  if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
   sleep 2
 done
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP="${IP:-<這台VM的IP>}"
 echo
 echo "=================================================================="
-if curl -fsS "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
-  echo "✅ PosePlanner 私有 DB 已啟動。"
+if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
+  echo "✅ PosePlanner 私有 DB 已啟動（對外埠 ${PORT}）。"
 else
   echo "⚠ 容器已啟動，但 /health 暫時沒回應。看 log：$COMPOSE logs -f api"
 fi
-echo "  健康檢查 ：http://localhost:${API_PORT}/health"
-echo "  網頁上傳 ：http://${IP}:${API_PORT}/"
+echo "  健康檢查 ：http://localhost:${PORT}/health"
+echo "  網頁上傳 ：http://${IP}:${PORT}/"
 echo
 echo "在裝了 skill 的機器（Claude Code / Desktop）上設定後端："
 echo "  python3 scripts/backend.py set --backend selfhost \\"
-echo "      --base-url http://${IP}:${API_PORT} \\"
+echo "      --base-url http://${IP}:${PORT} \\"
 echo "      --token ${TOKEN}"
 echo "=================================================================="

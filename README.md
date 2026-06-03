@@ -84,7 +84,10 @@ curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/serve
 `docker compose up -d --build` 拉起 **PostgreSQL + 圖片接收服務** → 最後**印出**你在
 Claude 端要貼的 `base-url` 與 `token`。跑完照著那段 `backend.py set ...` 設定即可。
 
-> 可用環境變數客製：`POSEPLANNER_DIR`（安裝目錄）、`API_PORT`（對外埠，預設 8000）。
+> 🔌 **埠自動避讓**：預設從 8000 起，若你的機器已經有服務站著那個埠，會**自動往上換**
+> （8001、8002…）並把實際用的埠寫進 `.env`、印在最後的連線資訊裡——所以**不會跟既有服務撞車**。
+>
+> 可用環境變數客製：`POSEPLANNER_DIR`（安裝目錄）、`API_PORT`（起始埠，預設 8000；一樣會自動避讓）。
 > 例：`curl -fsSL …/bootstrap.sh | API_PORT=9000 bash`。
 
 #### 🔧 手動架設（已有 Docker）
@@ -92,8 +95,9 @@ Claude 端要貼的 `base-url` 與 `token`。跑完照著那段 `backend.py set 
 ```bash
 git clone https://github.com/normantaipei/PosePlanner.git && cd PosePlanner/server
 cp .env.example .env          # ⚠ 改掉 POSTGRES_PASSWORD 與 POSEPLANNER_TOKEN
+# 若 8000 已被占用，把 .env 的 API_PORT 改成沒人用的埠（如 8080）
 docker compose up -d --build
-curl http://localhost:8000/health     # {"ok": true, ...}
+curl http://localhost:8000/health     # 健康檢查（埠對應 .env 的 API_PORT）
 ```
 
 #### 接上 Claude 端
