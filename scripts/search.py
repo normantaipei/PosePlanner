@@ -63,6 +63,22 @@ def _tags_of(conn, pose_id: int) -> list[str]:
     ]
 
 
+def _creators_of(conn, pose_id: int) -> list[dict]:
+    return [
+        {"name": name, "role": role, "handle": handle, "url": url}
+        for name, role, handle, url in conn.execute(
+            "SELECT c.name, pc.role, c.handle, c.url FROM pose_creators pc "
+            "JOIN creators c ON c.id=pc.creator_id WHERE pc.pose_id=? ORDER BY pc.role, c.name",
+            (pose_id,),
+        )
+    ]
+
+
+def _fmt_creators(creators: list[dict]) -> str:
+    """把創作者清單排成易讀字串，如 'model:小詩、photographer:阿攝'。"""
+    return "、".join(f"{c['role']}:{c['name']}" for c in creators)
+
+
 def _row_dict(conn, row) -> dict:
     pid, image_path, thumb, desc, fav, rating = row
     return {
@@ -73,6 +89,7 @@ def _row_dict(conn, row) -> dict:
         "favorite": bool(fav),
         "rating": rating,
         "tags": _tags_of(conn, pid),
+        "creators": _creators_of(conn, pid),
     }
 
 
@@ -154,6 +171,8 @@ def _print_human(results: list[dict], mode: str) -> None:
         print(head)
         print(f"  {r['description']}")
         print(f"  tags: {'、'.join(r['tags']) or '（無）'}")
+        if r.get("creators"):
+            print(f"  創作者: {_fmt_creators(r['creators'])}")
         print(f"  img : {r['image_path']}")
         print()
     if mode == "claude":
@@ -178,8 +197,8 @@ def _print_table(results: list[dict], mode: str) -> None:
         print("（沒有符合的 pose）")
         return
     print(f"找到 **{len(results)}** 張相關圖片（{mode}）：\n")
-    print("| 縮圖 | # | 描述 | 標籤 | 訊號 |")
-    print("|---|---|---|---|---|")
+    print("| 縮圖 | # | 描述 | 標籤 | 創作者 | 訊號 |")
+    print("|---|---|---|---|---|---|")
     for r in results:
         thumb = _abs_path(r.get("thumbnail_path"))
         thumb_cell = f"![#{r['id']}]({thumb})" if thumb else "—"
@@ -194,9 +213,11 @@ def _print_table(results: list[dict], mode: str) -> None:
 
         # tags 形如 "framing:全身"，表格裡只留值、用、串接，較好讀
         tag_vals = [t.split(":", 1)[-1] for t in r["tags"]]
+        creators_cell = _md_cell(_fmt_creators(r.get("creators", []))) or "—"
         print(
             f"| {thumb_cell} | {r['id']} | {_md_cell(r['description'])} "
-            f"| {_md_cell('、'.join(tag_vals)) or '—'} | {_md_cell(' '.join(signals)) or '—'} |"
+            f"| {_md_cell('、'.join(tag_vals)) or '—'} | {creators_cell} "
+            f"| {_md_cell(' '.join(signals)) or '—'} |"
         )
     print()
     if mode == "claude":

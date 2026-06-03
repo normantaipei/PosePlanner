@@ -140,6 +140,10 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
     {"category": "gaze_expression", "name": "看鏡頭"},
     {"category": "emotion",         "name": "療癒"}
   ],
+  "creators": [
+    {"name": "模特兒名", "role": "model"},
+    {"name": "攝影師名", "role": "photographer", "handle": "@ig_handle", "url": "https://..."}
+  ],
   "source": "選填，來源或檔名"
 }
 ```
@@ -150,6 +154,11 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
 - 只有當你覺得需要一個**全新維度**（taxonomy 沒有的 category）時才自創 category；
   腳本會把它標成 `proposed` 等使用者確認，所以請少用、且在回報時說明。
 - 每張至少給：作品/角色（若認得出）、人數、取景、體位、情緒。認不出作品就略過該維度，不要亂猜。
+
+創作者規則（`creators`，**選填**）：
+- 一張圖可記**多個**創作者，每筆 `name` 必填、`role` 標角色（常見：`model` 模特兒、`photographer` 攝影師、`retoucher` 修圖、`makeup` 妝髮）。
+- `role` 省略時存成 `creator`（未分類）。`handle`（社群帳號）、`url`（作品集/連結）、`note` 皆選填。
+- 沒有可靠的創作者資訊就整段省略，不要亂填或臆測來源。`creators` 不在 taxonomy 約束內，是獨立的人物紀錄。
 
 ### 3. 寫 manifest
 把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`（drive 模式）

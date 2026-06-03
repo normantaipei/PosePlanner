@@ -262,6 +262,10 @@ tags (id, name, category, usage_count, status, created_at)  -- status: active / 
 tag_aliases (alias, canonical_tag_id)  -- 同義詞收斂，避免越長越亂
 pose_tags (pose_id, tag_id)
 
+-- 創作者（一張圖可記多人，各帶 role：模特兒 / 攝影師…）
+creators (id, name, handle, url, note, created_at)  -- name 唯一去重；handle/url/note 選填
+pose_creators (pose_id, creator_id, role)           -- role 在主鍵內，同一人可多角色
+
 -- 學習
 taste_clusters (id, label, centroid, summary, size)  -- 自動發現的「調性」
 taste_profile (id, summary, top_tags, updated_at)    -- 整體審美畫像（快取）

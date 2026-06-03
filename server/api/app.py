@@ -12,6 +12,7 @@
   POST /images     (multipart)      收「一張原圖 + metadata」直接入庫（去重、產縮圖）
   POST /fragments  (multipart)      收一個 pack 出來的 fragment zip，回放併庫（相容雲端格式）
   PUT  /poses/{id}/tags  (json)     改一張 pose 的 tags（整批替換 / 只新增 / 只移除）
+  PUT  /poses/{id}/creators (json)  改一張 pose 的創作者（模特兒 / 攝影師…；整批替換 / 增 / 移除）
   GET  /search?q=&tag=&limit=       tag + 關鍵字粗篩候選（語意排序交給 Claude）
   GET  /thumbs/{name}               取縮圖
   GET  /images/{name}               取原圖
@@ -107,7 +108,8 @@ def stats(_: None = Depends(require_read)) -> dict:
         n_poses = conn.execute("SELECT COUNT(*) FROM poses").fetchone()[0]
         n_tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
         n_prop = conn.execute("SELECT COUNT(*) FROM tags WHERE status='proposed'").fetchone()[0]
-    return {"poses": n_poses, "tags": n_tags, "proposed_tags": n_prop}
+        n_creators = conn.execute("SELECT COUNT(*) FROM creators").fetchone()[0]
+    return {"poses": n_poses, "tags": n_tags, "proposed_tags": n_prop, "creators": n_creators}
 
 
 @app.post("/images")
@@ -115,6 +117,7 @@ async def upload_image(
     file: UploadFile = File(...),
     description: str = Form(...),
     tags: str = Form(...),                       # JSON 陣列：[{"category","name"}, ...]
+    creators: str | None = Form(default=None),   # 選配 JSON 陣列：[{"name","role","handle?","url?"}, ...]
     source: str | None = Form(default=None),
     rating: int | None = Form(default=None),
     favorite: bool = Form(default=False),
@@ -133,6 +136,14 @@ async def upload_image(
         raise HTTPException(status_code=400, detail="tags 必須是 JSON 陣列")
     if not description.strip() or not tag_list:
         raise HTTPException(status_code=400, detail="description / tags 不可空")
+
+    creator_list: list = []
+    if creators:
+        try:
+            creator_list = json.loads(creators)
+            assert isinstance(creator_list, list)
+        except Exception:
+            raise HTTPException(status_code=400, detail="creators 必須是 JSON 陣列")
 
     content_hash = hashlib.sha256(raw).hexdigest()
     ext = Path(file.filename or "").suffix.lower()
@@ -161,6 +172,7 @@ async def upload_image(
         "content_hash": content_hash,
         "description": description,
         "tags": tag_list,
+        "creators": creator_list,
         "source": source or (file.filename or content_hash[:8]),
         "rating": rating,
         "favorite": favorite,
@@ -212,6 +224,7 @@ async def upload_fragment(
                 "content_hash": ch,
                 "description": e.get("description"),
                 "tags": e.get("tags") or [],
+                "creators": e.get("creators") or [],
                 "source": e.get("source"),
                 "rating": e.get("rating"),
                 "favorite": e.get("favorite"),
@@ -275,6 +288,40 @@ async def update_pose_tags(
     return JSONResponse({"id": pose_id, **result})
 
 
+@app.put("/poses/{pose_id}/creators")
+async def update_pose_creators(
+    pose_id: int,
+    body: dict = Body(...),
+    _: None = Depends(require_write),
+) -> JSONResponse:
+    """改一張 pose 的創作者。body 為 JSON 物件，三種欄位（皆為
+    [{name, role, handle?, url?}, ...]，role 省略時預設 'creator'）：
+
+      {"creators": [...]}          整批替換成這份清單
+      {"add":      [...]}          只新增（已有的 (creator, role) 略過）
+      {"remove":   [...]}          只移除
+      {"creators": [...], "add":[...], "remove":[...]}   可混用：先替換再微調
+
+    回傳 {added, removed, creators}（creators 為更新後完整清單）。
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body 必須是 JSON 物件")
+    replace = body.get("creators")
+    add = body.get("add")
+    remove = body.get("remove")
+    for key, val in (("creators", replace), ("add", add), ("remove", remove)):
+        if val is not None and not isinstance(val, list):
+            raise HTTPException(status_code=400, detail=f"{key} 必須是 JSON 陣列")
+    if replace is None and add is None and remove is None:
+        raise HTTPException(status_code=400, detail="需至少給 creators / add / remove 其一")
+
+    with db.pool().connection() as conn:
+        result = db.update_pose_creators(conn, pose_id, replace=replace, add=add, remove=remove)
+    if result is None:
+        raise HTTPException(status_code=404, detail="找不到這張 pose")
+    return JSONResponse({"id": pose_id, **result})
+
+
 @app.get("/search")
 def search(q: str = "", tag: list[str] | None = None, limit: int = 20,
           _: None = Depends(require_read)) -> JSONResponse:
@@ -329,6 +376,7 @@ def search(q: str = "", tag: list[str] | None = None, limit: int = 20,
                 "favorite": bool(fav),
                 "rating": rating,
                 "tags": tags,
+                "creators": db.pose_creators(conn, pid),
             })
     return JSONResponse(out)
 
@@ -364,6 +412,8 @@ button{margin-top:16px;padding:8px 20px}</style></head><body>
   <label>動作敘述 description</label><textarea name="description" rows="3" required></textarea>
   <label>標籤 tags（JSON 陣列）</label>
   <textarea name="tags" rows="3" required>[{"category":"people_count","name":"單人"},{"category":"framing","name":"全身"}]</textarea>
+  <label>創作者 creators（JSON 陣列，選填）</label>
+  <textarea name="creators" rows="2">[{"name":"模特兒名","role":"model"},{"name":"攝影師名","role":"photographer"}]</textarea>
   <label>來源 source（選填）</label><input name="source">
   <label>Bearer token（若 server 有設）</label><input name="_token_hint" disabled
     placeholder="網頁表單不帶 token；有設 token 時請用 backend.py 上傳">

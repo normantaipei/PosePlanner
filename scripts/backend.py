@@ -162,7 +162,7 @@ def cmd_status(args) -> None:
             stats = _get_json(sh, "/stats")
             print(f"  連線    ：OK（{health}）")
             print(f"  庫狀態  ：poses={stats.get('poses')} tags={stats.get('tags')} "
-                  f"proposed={stats.get('proposed_tags')}")
+                  f"proposed={stats.get('proposed_tags')} creators={stats.get('creators')}")
         except SystemExit as e:
             print(f"  連線    ：✗ {e}")
 
@@ -245,6 +245,8 @@ def cmd_ingest(args) -> None:
             "source": entry.get("source") or src.name,
             "favorite": str(bool(entry.get("favorite"))).lower(),
         }
+        if entry.get("creators"):
+            fields["creators"] = json.dumps(entry["creators"], ensure_ascii=False)
         if entry.get("rating") is not None:
             fields["rating"] = str(entry["rating"])
         if entry.get("embedding"):
@@ -282,12 +284,21 @@ def cmd_image(args) -> None:
         tags.append({"category": c, "name": n})
     if not args.description or not tags:
         raise SystemExit("需要 --description 與至少一個 --tag。")
+    creators = []
+    for kv in args.creator or []:
+        if "=" in kv:
+            name, role = kv.split("=", 1)
+            creators.append({"name": name.strip(), "role": role.strip() or "creator"})
+        else:
+            creators.append({"name": kv.strip(), "role": "creator"})
     fields = {
         "description": args.description,
         "tags": json.dumps(tags, ensure_ascii=False),
         "source": args.source or src.name,
         "favorite": str(bool(args.favorite)).lower(),
     }
+    if creators:
+        fields["creators"] = json.dumps(creators, ensure_ascii=False)
     if args.rating is not None:
         fields["rating"] = str(args.rating)
     status, parsed = _post_multipart(sh, "/images", fields, [("file", src.name, src.read_bytes())])
@@ -310,6 +321,11 @@ def cmd_push(args) -> None:
 
 def _md_cell(text: str) -> str:
     return (text or "").replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _fmt_creators(creators: list) -> str:
+    """把創作者清單排成易讀字串，如 'model:小詩、photographer:阿攝'。"""
+    return "、".join(f"{c.get('role') or 'creator'}:{c.get('name')}" for c in creators or [])
 
 
 def cmd_search(args) -> None:
@@ -344,8 +360,8 @@ def cmd_search(args) -> None:
         return
     if args.table:
         print(f"找到 **{len(results)}** 張相關圖片（私有 DB）：\n")
-        print("| 縮圖 | # | 描述 | 標籤 | 訊號 |")
-        print("|---|---|---|---|---|")
+        print("| 縮圖 | # | 描述 | 標籤 | 創作者 | 訊號 |")
+        print("|---|---|---|---|---|---|")
         for r in results:
             thumb = r.get("thumbnail_path")
             cell = f"![#{r['id']}]({media_url(thumb)})" if thumb else "—"
@@ -355,8 +371,10 @@ def cmd_search(args) -> None:
             if r.get("rating"):
                 signals.append(f"{r['rating']}/5")
             tag_vals = [t.split(":", 1)[-1] for t in r.get("tags", [])]
+            creators_cell = _md_cell(_fmt_creators(r.get("creators", []))) or "—"
             print(f"| {cell} | {r['id']} | {_md_cell(r['description'])} "
-                  f"| {_md_cell('、'.join(tag_vals)) or '—'} | {_md_cell(' '.join(signals)) or '—'} |")
+                  f"| {_md_cell('、'.join(tag_vals)) or '—'} | {creators_cell} "
+                  f"| {_md_cell(' '.join(signals)) or '—'} |")
         print("\n> 以上是粗篩候選；請依使用者描述讀敘述做語意挑選，剔掉不貼近的。")
     else:
         print(f"找到 {len(results)} 筆候選（私有 DB）：\n")
@@ -369,6 +387,8 @@ def cmd_search(args) -> None:
             print(head)
             print(f"  {r['description']}")
             print(f"  tags: {'、'.join(r.get('tags', [])) or '（無）'}")
+            if r.get("creators"):
+                print(f"  創作者: {_fmt_creators(r['creators'])}")
             if r.get("thumbnail_path"):
                 print(f"  thumb: {media_url(r['thumbnail_path'])}")
             print()
@@ -397,6 +417,8 @@ def main() -> None:
     pim.add_argument("--image", required=True)
     pim.add_argument("--description", required=True)
     pim.add_argument("--tag", action="append", help="category=name，可重複")
+    pim.add_argument("--creator", action="append",
+                     help="創作者 name=role（role 如 model/photographer），可重複；只給 name 用預設角色")
     pim.add_argument("--source")
     pim.add_argument("--rating", type=int)
     pim.add_argument("--favorite", action="store_true")
