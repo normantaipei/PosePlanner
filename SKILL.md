@@ -209,16 +209,26 @@ content_hash 去重、產縮圖、寫 PostgreSQL。回報 `+N / 重複 / 失敗`
 
 ## 檢索（搜尋庫）
 
-使用者問「我有沒有 X 的圖 / 找幾張像 Y 的」時，依後端分流：
+使用者問「我有沒有 X 的圖 / 找幾張像 Y 的」時，依後端分流。
+
+> 🔴 **搜尋的鐵則：回覆一定要看得到圖。**
+> 使用者搜尋是為了「看圖挑」，不是讀標籤。所以**每一次搜尋的最終回覆都必須把挑出的圖以縮圖
+> 渲染在對話裡**（Markdown `![](縮圖絕對路徑)` 的表格）——**絕不可以只回 tag / 文字描述**。
+> - drive 模式：搜尋**一定要先把 fragments 拉下來 `compact`**，縮圖才會落地、才有圖可貼（見下方步驟）。
+> - 流程固定：**先粗篩 → 你讀 description 做語意挑選 → 用 `--ids` 把選中的那幾張連縮圖一起印出來**。
+> - 縮圖欄若出現 `—`（缺縮圖），照實說明那張入庫時沒縮圖，別默默吞掉。
 
 ### 🅑 selfhost 模式 — 直接打 server，不必重建
-私有 DB 一直在線，直接查即可（縮圖用 server URL，內網對話能直接渲染）：
+私有 DB 一直在線，縮圖是 server URL（內網對話能直接渲染），不必 compact。流程：
 ```bash
+# 1) 粗篩候選（讀敘述用）
+python3 scripts/backend.py search "回眸的帥氣站姿" --tag framing=半身 --json
+# 2) 讀 description 語意挑選後，把選中的排成含縮圖的表回給使用者
 python3 scripts/backend.py search "回眸的帥氣站姿" --tag framing=半身 --table
-python3 scripts/backend.py search --tag character=雷電將軍 --limit 30 --table
 ```
-server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description 做語意排序、剔掉不貼近的**，
-再把挑出的幾張排成表回給使用者（和下面 drive 模式的 search.py 同設計）。
+server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description 做語意排序、剔掉不貼近的**。
+**最終回覆一樣要含縮圖**（見上面的「搜尋鐵則」）：`--table` 的縮圖欄是帶 token 的 server URL，
+整段貼進對話就會渲染。別只回 tag/文字——挑完後把保留的那幾列連縮圖一起貼，並說明取捨。
 
 ### 🅐 drive 模式 — 需要時才重建
 因為庫的真身是 Drive 上累積的 fragments，**先把它們拉下來、在沙箱合併成一份臨時庫，再查**：
@@ -233,29 +243,30 @@ server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description �
        --db /tmp/poseplanner/library.db --data /tmp/poseplanner
    ```
    `compact` 以 content_hash 去重（重複的圖只入一次），縮圖落地到 `/tmp/poseplanner/images/thumbs/`。
-3. **查候選 → 你做語意挑選**（這就是「Claude 當語意引擎」的地方）：
+3. **粗篩候選**（這步給你看 description / tags，不是最終回覆）。
+   用 `--json` 拿機器可讀候選，方便你讀敘述做語意挑選：
    ```bash
-   python3 scripts/search.py "想要回眸的帥氣站姿" \
+   python3 scripts/search.py "想要回眸的帥氣站姿" --json \
        --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30 \
+   python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30 --json \
        --db /tmp/poseplanner/library.db --data /tmp/poseplanner
    ```
    `QUERY` 以空白拆成多個關鍵字，對 description 做 AND 模糊比對（只是粗篩，真正的語意排序由你判斷）。
    全身照之類的「取景」查詢用 `--tag framing=全身`；某角色的範例圖用 `--tag character=<角色>`
    （配合自然語言 QUERY 收斂）。
 
-4. **把結果排成表貼進對話**（使用者要「找相關圖片印成一張表」時的收場）：
-   加 `--table` 讓 search.py 直接吐一張 **Markdown 表格**（縮圖 / 描述 / 標籤 / 訊號），
-   縮圖欄是縮圖檔的絕對路徑圖片，貼進對話串就會渲染成含圖的表。
+4. **語意挑選 → 用 `--ids` 把選中的圖連縮圖印成表**（**這才是回給使用者的最終輸出**）：
+   你從候選裡讀 description、剔掉不貼近的、按貼近度排好，把選中的 `id` 用 `--ids` 傳回去，
+   search.py 會**保留你給的順序**吐一張含縮圖的 Markdown 表（縮圖 / 描述 / 標籤 / 訊號）：
    ```bash
-   python3 scripts/search.py --tag framing=全身 --limit 12 --table \
-       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   python3 scripts/search.py "雷電將軍 戰鬥姿" --tag character=雷電將軍 --table \
+   python3 scripts/search.py --ids 7,3,12,5 --table \
        --db /tmp/poseplanner/library.db --data /tmp/poseplanner
    ```
-   `--table` 是粗篩候選的呈現格式；**你仍要先讀 description 做語意排序、剔掉不貼近的**，
-   再把挑出來的幾張排成表回給使用者（可先 `--json` 拿候選自己挑、再手排表，或直接 `--table`
-   印完在話裡說明你保留/淘汰了哪些）。
+   把這張表整段貼進對話，縮圖（絕對路徑圖片）就會渲染出來。
+   **回覆務必含這張圖表**，再用一兩句說明你為什麼挑這些、淘汰了哪些。
+   > 想直接呈現粗篩結果不另做挑選時，也可以一步到位 `--table`（仍含縮圖）：
+   > `python3 scripts/search.py --tag framing=全身 --limit 12 --table --db … --data …`
+   > 但只要使用者是在「找特定感覺的圖」，請走上面的 `--json` → `--ids` 兩段式，回覆品質更好。
 
 > 這份 `/tmp/poseplanner/library.db` 是**臨時**的、查完即丟——**不要**回傳到 Drive。
 > Drive 上永遠只維護 `fragments/`。
@@ -277,8 +288,8 @@ server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description �
   fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
 - `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；
   Twitter/IG 純標準庫，FB 走 gallery-dl + 瀏覽器 cookies）。**已實作**。
-- `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--table` 印 Markdown
-  表格（含縮圖）直接貼進對話。**已實作**。
+- `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--json` 拿候選、
+  `--ids 7,3,12 --table` 把選中的圖（保留順序、含縮圖）印成 Markdown 表直接貼進對話。**已實作**。
 - `scripts/vecdb.py`：sqlite-vec 載入層（挑平台二進位、必要時 re-exec 到可用 python）。
 - `scripts/update_profile.py`：重算審美畫像（Phase 2，未實作）
 - `scripts/make_plan.py`：產拍攝計劃書（Phase 4，未實作）

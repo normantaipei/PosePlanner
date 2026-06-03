@@ -93,6 +93,19 @@ def _row_dict(conn, row) -> dict:
     }
 
 
+def fetch_by_ids(conn, ids: list[int]) -> list[dict]:
+    """依指定 id 取回 poses，**保留傳入的順序**（給語意挑選後重排呈現用）。"""
+    out: list[dict] = []
+    for pid in ids:
+        row = conn.execute(
+            "SELECT id, image_path, thumbnail_path, description, favorite, rating "
+            "FROM poses WHERE id=?", (pid,),
+        ).fetchone()
+        if row:
+            out.append(_row_dict(conn, row))
+    return out
+
+
 def search_claude(conn, query: str, tag_pairs, limit: int) -> list[dict]:
     """粗篩候選（tag + 關鍵字 LIKE），交給 Claude 做語意排序。"""
     ids = _tag_filter_ids(conn, tag_pairs)
@@ -199,9 +212,12 @@ def _print_table(results: list[dict], mode: str) -> None:
     print(f"找到 **{len(results)}** 張相關圖片（{mode}）：\n")
     print("| 縮圖 | # | 描述 | 標籤 | 創作者 | 訊號 |")
     print("|---|---|---|---|---|---|")
+    missing = 0
     for r in results:
         thumb = _abs_path(r.get("thumbnail_path"))
         thumb_cell = f"![#{r['id']}]({thumb})" if thumb else "—"
+        if not thumb:
+            missing += 1
 
         signals = []
         if "distance" in r:
@@ -220,6 +236,8 @@ def _print_table(results: list[dict], mode: str) -> None:
             f"| {_md_cell(' '.join(signals)) or '—'} |"
         )
     print()
+    if missing:
+        print(f"> ⚠ 有 {missing} 張缺縮圖（入庫時可能沒裝 Pillow）；該列圖欄顯示 —。")
     if mode == "claude":
         print("> 以上是粗篩候選；已依語意排序，挑最貼近你描述的幾張即可。")
 
@@ -239,9 +257,22 @@ def cmd_search(args) -> None:
     if not add_pose.DB_PATH.exists():
         raise SystemExit("尚未建庫，先用 add_pose.py 入庫。")
 
+    ids: list[int] = []
+    for chunk in args.ids or []:
+        for tok in chunk.replace("，", ",").split(","):
+            tok = tok.strip().lstrip("#")
+            if tok:
+                if not tok.isdigit():
+                    raise SystemExit(f"--ids 只能是數字 id（逗號分隔），收到：{tok}")
+                ids.append(int(tok))
+
     conn = add_pose.connect()
     try:
-        if args.knn:
+        if ids:
+            # 語意挑選後重新呈現：只取這些 id，保留你給的順序
+            results = fetch_by_ids(conn, ids)
+            mode = "selected"
+        elif args.knn:
             results = search_knn(conn, query, tag_pairs, args.limit)
             mode = "knn"
         else:
@@ -268,6 +299,9 @@ def main() -> None:
     p.add_argument("--json", action="store_true", help="同時輸出機器可讀 JSON")
     p.add_argument("--table", action="store_true",
                    help="輸出 Markdown 表格（含縮圖），可直接貼進對話串渲染")
+    p.add_argument("--ids", action="append",
+                   help="只呈現這些 pose id（逗號分隔，可重複），保留順序；"
+                        "語意挑選後用它把選中的圖連縮圖一起印出來")
     p.add_argument("--db", default=None)
     p.add_argument("--data", default=None)
     args = p.parse_args()
