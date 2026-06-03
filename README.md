@@ -55,6 +55,25 @@ PosePlanner 是一個 **Agent Skill**。Claude Desktop 與 Claude Code 的安裝
 > 想累積成長的庫，見下方〔跨對話保存〕。縮圖在 Desktop 由 Pillow 產（沙箱內建），
 > 不依賴 macOS 的 `sips`。
 
+#### 🔐（選配）把私有 DB 連線烤進 zip，免每次重設
+
+用 **selfhost（私有 DB）** 後端時，雲端沙箱每次對話重置，預設每開新對話都要重跑一次
+`backend.py set …`。在專案根目錄放一份 `.env`，`build_skill_zip.sh` 打包時會自動把連線
+資訊寫進 zip 裡的 `data/config.json`，上傳後即為「私有 DB 已連線」狀態，不必再手動設定。
+
+```bash
+cp .env.example .env          # 複製範本
+# 編輯 .env，填入你的私有 DB 連線：
+#   POSEPLANNER_BACKEND=selfhost
+#   POSEPLANNER_BASE_URL=http://192.168.x.x:8000
+#   POSEPLANNER_TOKEN=<入庫用讀寫 token；只搜尋可填唯讀 token>
+bash scripts/build_skill_zip.sh   # 看到「🔐 已從 .env 烤入連線設定」即成功
+```
+
+> 🔒 `.env`、產出的 `data/config.json` 與 `dist/*.zip` 都已被 `.gitignore` 忽略，不會進版控。
+> 換 IP / token 時只改 `.env` 重新打包、重新上傳即可。
+> **沒有 `.env` 也完全正常** —— 打包內容與原本一致，skill 上傳後會在對話裡問你要哪種後端。
+
 ### B. Claude Code（CLI / VSCode）
 
 ```bash
