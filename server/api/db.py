@@ -206,3 +206,90 @@ def upsert_pose(conn: psycopg.Connection, entry: dict, dims: set[str]) -> tuple[
         conn.execute("UPDATE tags SET usage_count = usage_count + 1 WHERE id=%s", (tag_id,))
 
     return pose_id, "added"
+
+
+def _link_tag(conn: psycopg.Connection, pose_id: int, tag_id: int) -> bool:
+    """掛一個 tag 到 pose；真的新增了才 +usage_count。回傳是否變動。"""
+    cur = conn.execute(
+        "INSERT INTO pose_tags(pose_id, tag_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+        (pose_id, tag_id),
+    )
+    if cur.rowcount:
+        conn.execute("UPDATE tags SET usage_count = usage_count + 1 WHERE id=%s", (tag_id,))
+        return True
+    return False
+
+
+def _unlink_tag(conn: psycopg.Connection, pose_id: int, tag_id: int) -> bool:
+    """卸一個 tag；真的移除了才 -usage_count（不低於 0）。回傳是否變動。"""
+    cur = conn.execute(
+        "DELETE FROM pose_tags WHERE pose_id=%s AND tag_id=%s", (pose_id, tag_id)
+    )
+    if cur.rowcount:
+        conn.execute(
+            "UPDATE tags SET usage_count = GREATEST(usage_count - 1, 0) WHERE id=%s", (tag_id,)
+        )
+        return True
+    return False
+
+
+def _resolve_pairs(conn: psycopg.Connection, tags: list, dims: set[str]) -> set[int]:
+    """把 [{category,name}, ...] 解析成 canonical tag_id 集合（略過空欄位）。"""
+    ids: set[int] = set()
+    for t in tags or []:
+        category = (t.get("category") or "").strip()
+        name = (t.get("name") or "").strip()
+        if not category or not name:
+            continue
+        tag_id, _is_new = resolve_tag(conn, category, name, dims)
+        ids.add(tag_id)
+    return ids
+
+
+def update_pose_tags(
+    conn: psycopg.Connection,
+    pose_id: int,
+    dims: set[str],
+    *,
+    replace: list | None = None,
+    add: list | None = None,
+    remove: list | None = None,
+) -> dict | None:
+    """改一張 pose 的 tags。pose 不存在回 None。
+
+    replace 有給 → 整批替換成 replace（add/remove 視為附加微調）；
+    否則只套用 add / remove。回傳 {added, removed, tags}（tags 為更新後完整清單）。
+    """
+    if conn.execute("SELECT 1 FROM poses WHERE id=%s", (pose_id,)).fetchone() is None:
+        return None
+
+    current = {
+        r[0]
+        for r in conn.execute(
+            "SELECT tag_id FROM pose_tags WHERE pose_id=%s", (pose_id,)
+        ).fetchall()
+    }
+    add_ids = _resolve_pairs(conn, add, dims)
+    remove_ids = _resolve_pairs(conn, remove, dims)
+
+    if replace is not None:
+        target = _resolve_pairs(conn, replace, dims) | add_ids
+        target -= remove_ids
+        to_add = target - current
+        to_remove = current - target
+    else:
+        to_add = add_ids - remove_ids
+        to_remove = remove_ids - add_ids
+
+    added = sum(_link_tag(conn, pose_id, tid) for tid in to_add)
+    removed = sum(_unlink_tag(conn, pose_id, tid) for tid in to_remove)
+
+    tags = [
+        {"category": cat, "name": name}
+        for cat, name in conn.execute(
+            "SELECT t.category, t.name FROM pose_tags pt JOIN tags t ON t.id=pt.tag_id "
+            "WHERE pt.pose_id=%s ORDER BY t.category, t.name",
+            (pose_id,),
+        ).fetchall()
+    ]
+    return {"added": added, "removed": removed, "tags": tags}

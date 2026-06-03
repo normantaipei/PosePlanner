@@ -11,6 +11,7 @@
   GET  /stats                       庫狀態（poses / tags 數）
   POST /images     (multipart)      收「一張原圖 + metadata」直接入庫（去重、產縮圖）
   POST /fragments  (multipart)      收一個 pack 出來的 fragment zip，回放併庫（相容雲端格式）
+  PUT  /poses/{id}/tags  (json)     改一張 pose 的 tags（整批替換 / 只新增 / 只移除）
   GET  /search?q=&tag=&limit=       tag + 關鍵字粗篩候選（語意排序交給 Claude）
   GET  /thumbs/{name}               取縮圖
   GET  /images/{name}               取原圖
@@ -27,7 +28,7 @@ import os
 import zipfile
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import db
@@ -235,6 +236,43 @@ async def upload_fragment(
             (added, dup, 0, f"fragment｜+{added} 重複{dup} 失敗{errors}"),
         )
     return JSONResponse({"added": added, "dup": dup, "errors": errors})
+
+
+@app.put("/poses/{pose_id}/tags")
+async def update_pose_tags(
+    pose_id: int,
+    body: dict = Body(...),
+    _: None = Depends(require_write),
+) -> JSONResponse:
+    """改一張 pose 的 tags。body 為 JSON 物件，三種欄位（皆為 [{category,name}, ...]）：
+
+      {"tags":  [...]}             整批替換成這份清單
+      {"add":   [...]}             只新增（已有的略過）
+      {"remove":[...]}             只移除
+      {"tags": [...], "add":[...], "remove":[...]}   可混用：先替換再微調
+
+    新標籤沿用入庫規則：既有維度→active，未知維度→proposed。
+    回傳 {added, removed, tags}（tags 為更新後完整清單）。
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body 必須是 JSON 物件")
+    replace = body.get("tags")
+    add = body.get("add")
+    remove = body.get("remove")
+    for key, val in (("tags", replace), ("add", add), ("remove", remove)):
+        if val is not None and not isinstance(val, list):
+            raise HTTPException(status_code=400, detail=f"{key} 必須是 JSON 陣列")
+    if replace is None and add is None and remove is None:
+        raise HTTPException(status_code=400, detail="需至少給 tags / add / remove 其一")
+
+    dims = db.known_categories()
+    with db.pool().connection() as conn:
+        result = db.update_pose_tags(
+            conn, pose_id, dims, replace=replace, add=add, remove=remove
+        )
+    if result is None:
+        raise HTTPException(status_code=404, detail="找不到這張 pose")
+    return JSONResponse({"id": pose_id, **result})
 
 
 @app.get("/search")

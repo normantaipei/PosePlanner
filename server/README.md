@@ -64,12 +64,36 @@ python3 scripts/backend.py status            # 確認連得到
 | GET | `/stats` | poses / tags 數 | 讀取 |
 | POST | `/images` | 收**一張原圖 + metadata** 直接入庫（去重、產縮圖、存原圖） | 讀寫 |
 | POST | `/fragments` | 收一個 `pack` 出來的 fragment zip 回放併庫（相容雲端格式，只帶縮圖） | 讀寫 |
+| PUT | `/poses/{id}/tags` | 改一張 pose 的 tags（整批替換 / 只新增 / 只移除） | 讀寫 |
 | GET | `/search?q=&tag=&limit=` | tag + 關鍵字粗篩候選（語意排序交給 Claude） | 讀取 |
 | GET | `/thumbs/{hash}.jpg` | 取縮圖 | 讀取 |
 | GET | `/images/{hash}.ext` | 取原圖 | 讀取 |
 
 `/images` 的 multipart 欄位：`file`（圖）、`description`、`tags`（JSON 陣列
 `[{"category","name"},...]`）、選填 `source` / `rating` / `favorite` / `embedding` / `embedding_model`。
+
+`/poses/{id}/tags` 的 JSON body（三個欄位皆為 `[{"category","name"},...]`，可混用）：
+
+```jsonc
+{"tags":   [...]}   // 整批替換成這份清單
+{"add":    [...]}   // 只新增（已有的略過）
+{"remove": [...]}   // 只移除
+```
+
+新標籤沿用入庫規則（既有維度→`active`、未知維度→`proposed`），並維護 `tags.usage_count`。
+回傳 `{"id", "added", "removed", "tags"}`，`tags` 為更新後完整清單；pose 不存在回 `404`。
+
+```bash
+# 整批替換
+curl -X PUT http://localhost:8000/poses/42/tags \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"tags":[{"category":"people_count","name":"單人"},{"category":"framing","name":"半身"}]}'
+
+# 只加一個、移掉一個
+curl -X PUT http://localhost:8000/poses/42/tags \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"add":[{"category":"emotion","name":"開朗"}],"remove":[{"category":"framing","name":"全身"}]}'
+```
 
 ### 權限：兩組 token
 
