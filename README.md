@@ -4,12 +4,21 @@
 
 每天餵入你覺得漂亮的 cosplay 圖，它會自動辨識角色／作品、轉成動作敘述與結構化標籤入庫，逐漸學會你的審美與出鏡偏好，在你需要參考圖或是靈感時幫你挑 pose、甚至根據出角角色生成拍攝計劃書。
 
-> ## ☁️ 重要：本專案是 **Serverless 架構**
-> **沒有任何後端伺服器**，所有資料庫（`library.db`）與圖片都只存在**你自己的 Google Drive 個人雲端硬碟**——
-> 我們不持有、也不經手你的任何資料。
+> ## ☁️ 重要：庫存在「你自己的地方」，兩種後端二選一
+> 我們**不持有、也不經手你的任何資料**。第一次使用時選一種儲存後端（記在 `data/config.json`）：
 >
-> 👉 因此使用前**務必先在 Claude Desktop 綁定並開通 Google Drive 連接器**
-> （**設定 → 連接器 → Google Drive**），否則 skill 無法讀寫你的庫、資料也無處保存。
+> 1. **Google Drive（純雲端、預設）**：庫與圖只存在**你自己的 Google Drive**，零維運、手機可用。
+>    需先在 Claude 綁定 **Google Drive 連接器**（**設定 → 連接器 → Google Drive**）。
+> 2. **私有 DB（自架）**：庫存在**你網域內自架的一台機器**（PostgreSQL + 圖片接收服務，
+>    `docker compose up` 即可），**原圖留在你自己手上**、無單筆大小上限。見 [server/README.md](server/README.md)。
+>
+> 👉 第一次執行時 skill 會問你要哪一種；也可手動設定：
+> ```bash
+> python3 scripts/backend.py status                          # 看目前後端
+> python3 scripts/backend.py set --backend drive             # 用 Google Drive
+> python3 scripts/backend.py set --backend selfhost \        # 用私有 DB
+>     --base-url http://192.168.x.x:8000 --token <token>
+> ```
 
 > ## 🎓 開發初衷與使用聲明
 > 本專案是為了**幫助新手攝影師與 cosplayer 學習、成長**而開發——讓你累積審美、練習構圖與 pose、找到靈感。
@@ -55,6 +64,49 @@ ln -s "$(pwd)" ~/.claude/skills/poseplanner   # 軟連結，git pull 即更新
 ```
 重開 Claude Code，輸入 `/` 應看到 `poseplanner`；圖放本機資料夾，直接說
 「把 `~/Desktop/今天的圖/` 入庫」。庫永久存在本機 `data/library.db`。
+
+### C. 後端服務：私有 DB（自架，選 selfhost 才需要）
+
+> 只有要用**私有 DB 後端**（庫存在你自己網域內的機器）才需要這步；
+> 用 Google Drive 模式可**完全跳過**。後端通常架在另一台機器（家用 NAS / 工作室主機 / 雲端 VM），
+> 跟你跑 skill 的電腦分開。
+
+#### 🚀 一鍵架設（全新空 VM）
+
+在一台**乾淨的 Ubuntu / Debian VM** 上，用 root 或有 sudo 的帳號直接貼這一行——
+Docker、git、密鑰、容器全自動搞定：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/server/bootstrap.sh | bash
+```
+
+它會：裝 Docker → clone repo → 產 `server/.env`（密碼與 token 用亂數自動生成）→
+`docker compose up -d --build` 拉起 **PostgreSQL + 圖片接收服務** → 最後**印出**你在
+Claude 端要貼的 `base-url` 與 `token`。跑完照著那段 `backend.py set ...` 設定即可。
+
+> 可用環境變數客製：`POSEPLANNER_DIR`（安裝目錄）、`API_PORT`（對外埠，預設 8000）。
+> 例：`curl -fsSL …/bootstrap.sh | API_PORT=9000 bash`。
+
+#### 🔧 手動架設（已有 Docker）
+
+```bash
+git clone https://github.com/normantaipei/PosePlanner.git && cd PosePlanner/server
+cp .env.example .env          # ⚠ 改掉 POSTGRES_PASSWORD 與 POSEPLANNER_TOKEN
+docker compose up -d --build
+curl http://localhost:8000/health     # {"ok": true, ...}
+```
+
+#### 接上 Claude 端
+
+在裝了 skill 的機器上（把 IP / token 換成上面印出來的）：
+
+```bash
+python3 scripts/backend.py set --backend selfhost \
+    --base-url http://<這台VM的內網IP>:8000 --token <你的 token>
+python3 scripts/backend.py status     # 確認連得到
+```
+
+細節（API、備份、還原）見 [server/README.md](server/README.md)。
 
 ### 向量引擎（已 vendored，不需安裝）
 語意 KNN 用的 [sqlite-vec](https://github.com/asg017/sqlite-vec) 二進位已放在
@@ -125,8 +177,14 @@ poseplanner/
 │   └── make_plan.py      # 選 pose → shot list → 計劃書
 ├── vendor/
 │   └── sqlite-vec/       # 向量引擎二進位（mac/linux，vendored、進版控）
+├── scripts/backend.py    # 後端選擇（drive｜selfhost）＋私有 DB 客戶端
+├── server/               # 私有 DB（自架）後端
+│   ├── docker-compose.yml  # PostgreSQL（pgvector）+ 圖片接收服務
+│   ├── api/                # FastAPI：/images /fragments /search …
+│   └── db/schema.sql       # Postgres 結構
 └── data/
-    ├── library.db        # SQLite + sqlite-vec（可攜帶、可分享）
+    ├── library.db        # SQLite + sqlite-vec（drive 模式臨時庫，可攜帶、可分享）
+    ├── config.json       # 選的後端（不進版控，含 selfhost token）
     └── images/           # 原圖 + 縮圖
 ```
 
@@ -234,3 +292,5 @@ tag 管精確、Claude 管模糊，互補。需要時可改走 sqlite-vec 的向
 - [x] db/data 路徑可覆寫（`--db` / `--data` / 環境變數）＋ 單一檔（關 WAL），雲端可整檔搬運
 - [ ] Google Drive 連接器持久化：開場下載 → 入庫 → 收場覆寫（SKILL.md 已寫流程，待實測連接器讀寫二進位）
 - [ ] 匯出／匯入 pose pack（一個 `.db` + `images/` 即可分享、繼承審美庫）
+- [x] **私有 DB 後端（自架，二選一）**：`server/` 的 PostgreSQL + 圖片接收服務（Docker Compose），
+      `scripts/backend.py` 做後端選擇與連線；第一次執行時選 Drive 或私有 DB

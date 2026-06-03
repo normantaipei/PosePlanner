@@ -16,7 +16,30 @@ description: >-
 通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖），
 **或丟一個 Instagram / Twitter(X) 貼文網址**（見下方「社群貼文入庫」）。
 
-## 架構：純雲端、只上傳不下載
+## 儲存後端：二選一（第一次執行時選）
+
+庫可以存在兩種地方，**第一次使用時要先選一種**，記在 `data/config.json`：
+
+- **`drive`（Google Drive，純雲端）**：pack 成 fragment 上傳到使用者的 Google Drive，零維運、原圖不留。手機 / Desktop 適用。
+- **`selfhost`（私有 DB，自架）**：直連使用者網域內自架的 server（`server/docker-compose.yml`，PostgreSQL + 圖片接收服務），**原圖留在使用者自己的機器**，無單筆大小上限。
+
+**開場必做**：先看目前後端——
+```bash
+python3 scripts/backend.py status
+```
+- 若印出「尚未設定後端」，**在對話裡問使用者要用哪一種**（Google Drive 還是已架好的私有 DB），然後幫他寫設定：
+  ```bash
+  # 選 Google Drive：
+  python3 scripts/backend.py set --backend drive
+  # 選私有 DB（向使用者要 server 內網位址與 token）：
+  python3 scripts/backend.py set --backend selfhost \
+      --base-url http://192.168.x.x:8000 --token <使用者的 token>
+  ```
+- 之後的「上傳」與「搜尋」步驟**依後端分流**（見下方各步驟的 🅐/🅑 標記）。私有 DB 的架站說明見 [server/README.md](server/README.md)。
+
+> 看圖、產 description + tags 的流程**兩種後端完全一樣**；只有「資料落到哪」不同。
+
+## 🅐 架構（drive 模式）：純雲端、只上傳不下載
 
 這個 skill **完全在雲端沙箱（手機 / Desktop）運行**，庫存在使用者的 **Google Drive**。
 核心設計是**讓 token 成本與庫的大小脫鉤**：
@@ -125,29 +148,25 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
   腳本會把它標成 `proposed` 等使用者確認，所以請少用、且在回報時說明。
 - 每張至少給：作品/角色（若認得出）、人數、取景、體位、情緒。認不出作品就略過該維度，不要亂猜。
 
-### 3. 寫 manifest → `pack` 成 fragment（不寫庫）
-把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`。
-圖先存進 `/tmp/poseplanner/`（manifest 裡 `image` 可用相對 manifest 的路徑或絕對路徑）。
-然後打包：
+### 3. 寫 manifest
+把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`（drive 模式）
+或本機暫存夾（selfhost 模式）。圖先存好（manifest 裡 `image` 可用相對 manifest 的路徑或絕對路徑）。
 
+> 🧠 **設計：Claude 產資料、腳本只寫檔。** **預設不自算向量**——語意理解由你（Claude）在
+> 搜尋時讀敘述完成。向量是選配：manifest 帶現成 `embedding`（384 維）會在 drive 模式被打進
+> fragment、selfhost 模式被寫進 Postgres 的 pgvector。
+
+### 4. 收場：依後端分流上傳
+
+#### 🅐 drive 模式 — `pack` 成 fragment → 連接器上傳
 ```bash
 python3 scripts/add_pose.py pack \
     --manifest /tmp/poseplanner/_ingest.json \
     --out /tmp/poseplanner/outbox/
 ```
-
 產出 `…/outbox/frag-<時間戳>.zip`，內含 `manifest.json`（每筆帶 content_hash + 縮圖名）
 + `thumbs/<hash>.jpg`。**原圖 bytes 不在裡面**——原圖留在你加圖的裝置即可。`pack` 完全
-**不碰任何庫**。
-
-> 🧠 **設計：Claude 產資料、腳本只寫檔。** **預設不自算向量**——語意理解由你（Claude）在
-> 搜尋時讀敘述完成。向量是選配：manifest 帶現成 `embedding`（384 維）會被打進 fragment、
-> 搜尋時 `compact` 寫入 vec0。
-
-### 4. 上傳這「一個 zip」（收場）
-用 Google Drive 連接器把**剛打包好的 fragment zip**（通常只有幾十～幾百 KB）丟上去。
-
-`create_file`：
+**不碰任何庫**。然後用 Google Drive 連接器把這個 zip 上傳，`create_file`：
 - `parentId`：`PosePlanner/fragments/` 的 folderId（沒有就先 `create_file` 建資料夾鏈：
   先建 `PosePlanner`，再在它底下建 `fragments`）
 - `title`：`frag-<時間戳>.zip`（沿用檔名）
@@ -155,11 +174,19 @@ python3 scripts/add_pose.py pack \
 - `contentMimeType`：`application/zip`
 - `disableConversionToGoogleType`：**`true`** ← 不加 Drive 會嘗試轉檔弄壞它！
 
-> ✅ **只上傳這一包，不下載任何東西、不上傳原圖、不上傳整個庫。** 這就是 token 省下來的關鍵：
-> 每次成本是 O(今天新增) 而非 O(整個庫)。連接器有單筆大小上限，原圖（3–8MB）會超限失敗，
-> 但一包 fragment 很小，穩過。
->
+> ✅ **只上傳這一包，不下載任何東西、不上傳原圖、不上傳整個庫。** 每次成本是 O(今天新增)。
+> 連接器有單筆大小上限，原圖（3–8MB）會超限失敗，但一包 fragment 很小，穩過。
 > 上傳失敗就**明講**並保留 `/tmp/poseplanner/outbox/` 的 zip，別讓使用者以為存好了。
+
+#### 🅑 selfhost 模式 — 原圖直接送進私有 DB
+私有 server 有原圖接收服務，可以直接收原圖（不必只送縮圖）。把 manifest 餵給：
+```bash
+python3 scripts/backend.py ingest --manifest /tmp/poseplanner/_ingest.json
+```
+它會逐張把**原圖 + description + tags** POST 到 server 的 `/images`，伺服器端
+content_hash 去重、產縮圖、寫 PostgreSQL。回報 `+N / 重複 / 失敗`。
+> 失敗（連不到 server、token 錯）就**據實回報**，別假裝存好了。已 `pack` 過的舊 zip
+> 也能補送：`python3 scripts/backend.py push --fragment <frag.zip>`。
 
 ### 5. 回報
 把 `pack` 印出的摘要轉述給使用者，並補充你的觀察，例如：
@@ -168,10 +195,21 @@ python3 scripts/add_pose.py pack \
 
 如果有 `proposed` 新維度，主動問使用者是否要保留。
 
-## 檢索（搜尋庫）— 需要時才重建
+## 檢索（搜尋庫）
 
-使用者問「我有沒有 X 的圖 / 找幾張像 Y 的」時，因為庫的真身是 Drive 上累積的 fragments，
-**先把它們拉下來、在沙箱合併成一份臨時庫，再查**：
+使用者問「我有沒有 X 的圖 / 找幾張像 Y 的」時，依後端分流：
+
+### 🅑 selfhost 模式 — 直接打 server，不必重建
+私有 DB 一直在線，直接查即可（縮圖用 server URL，內網對話能直接渲染）：
+```bash
+python3 scripts/backend.py search "回眸的帥氣站姿" --tag framing=半身 --table
+python3 scripts/backend.py search --tag character=雷電將軍 --limit 30 --table
+```
+server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description 做語意排序、剔掉不貼近的**，
+再把挑出的幾張排成表回給使用者（和下面 drive 模式的 search.py 同設計）。
+
+### 🅐 drive 模式 — 需要時才重建
+因為庫的真身是 Drive 上累積的 fragments，**先把它們拉下來、在沙箱合併成一份臨時庫，再查**：
 
 1. **下載 fragments**：用 Drive 連接器列出 `PosePlanner/fragments/` 底下所有 `*.zip`，
    逐個 `download_file_content` 取 base64 → 存到 `/tmp/poseplanner/fragments/`。
@@ -220,6 +258,9 @@ python3 scripts/add_pose.py pack \
   （連接器不能代刪）。content_hash 去重保證重抓也不會重複，所以清舊包很安全。
 
 ## 相關腳本
+- `scripts/backend.py`：**儲存後端選擇與私有 DB 客戶端**（純標準庫）。`status` / `setup` /
+  `set`（drive｜selfhost）/ `ingest`（selfhost：原圖逐張送 /images）/ `push`（送 fragment zip）/
+  `search`（打 server /search）/ `image`（單張）。第一次執行先用它選後端。**已實作**。
 - `scripts/add_pose.py`：核心。`pack`（看圖後打包 fragment，不寫庫）/ `compact`（搜尋時把
   fragments 合併成臨時庫，去重）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
 - `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；

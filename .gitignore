@@ -223,6 +223,10 @@ data/library.db
 data/library.db-wal
 data/library.db-shm
 data/images/
+# 後端設定（含私有 DB 的 token），不進版控
+data/config.json
+# 私有 DB server 的密鑰
+server/.env
 
 # sqlite-vec 向量引擎二進位是 vendored 的，必須進版控（覆蓋上面的 *.so / lib/ 規則）
 !vendor/
