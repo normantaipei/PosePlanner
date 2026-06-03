@@ -16,6 +16,7 @@ zip -r "$OUT" \
   SKILL.md \
   taxonomy.yaml \
   requirements.txt \
+  scripts/backend.py \
   scripts/add_pose.py \
   scripts/fetch_post.py \
   scripts/search.py \
