@@ -12,8 +12,9 @@
      python3 scripts/search.py "逆光 慵懶" --tag people_count=單人 --json
      python3 scripts/search.py --tag framing=全身 --table   # ← Markdown 表（含縮圖），直接貼進對話
 
-   QUERY 會以空白拆成多個關鍵字，對 description 做 AND 的 LIKE 模糊比對（先粗篩，
-   真正的語意排序交給 Claude）。給了 --json 就同時印出機器可讀的結果；給了 --table
+   QUERY 會以空白拆成多個關鍵字，每個關鍵字對 description／tag 名稱／創作者名做 AND 的
+   LIKE 模糊比對（先粗篩，真正的語意排序交給 Claude）。給了 --json 就同時印出機器可讀的
+   結果；給了 --table
    會印一張 Markdown 表格（縮圖 / 描述 / 標籤 / 訊號），貼進對話串就會渲染成圖表。
 
 2) **向量 KNN（選配，--knn）**：若 pose_vectors（sqlite-vec 的 vec0 表）裡有向量，
@@ -118,9 +119,18 @@ def search_claude(conn, query: str, tag_pairs, limit: int) -> list[dict]:
             return []
         clauses.append(f"id IN ({','.join('?' * len(ids))})")
         params += list(ids)
+    # 每個關鍵字需命中 description／tag 名稱(或分類)／創作者名(或 handle)其一，關鍵字之間 AND。
+    # （與 server /search 一致：自由文字不只查 description，才搜得到只靠 tag 標記的角色/作品）
     for kw in query.split():
-        clauses.append("description LIKE ?")
-        params.append(f"%{kw}%")
+        like = f"%{kw}%"
+        clauses.append(
+            "(description LIKE ? "
+            "OR id IN (SELECT pt.pose_id FROM pose_tags pt JOIN tags t ON t.id=pt.tag_id "
+            "WHERE t.name LIKE ? OR t.category LIKE ?) "
+            "OR id IN (SELECT pc.pose_id FROM pose_creators pc JOIN creators c ON c.id=pc.creator_id "
+            "WHERE c.name LIKE ? OR c.handle LIKE ?))"
+        )
+        params += [like, like, like, like, like]
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY favorite DESC, rating IS NULL, rating DESC, created_at DESC LIMIT ?"
