@@ -14,11 +14,12 @@
   PUT  /poses/{id}/tags  (json)     改一張 pose 的 tags（整批替換 / 只新增 / 只移除）
   PUT  /poses/{id}/creators (json)  改一張 pose 的創作者（模特兒 / 攝影師…；整批替換 / 增 / 移除）
   GET  /search?q=&tag=&limit=       tag + 關鍵字粗篩候選（語意排序交給 Claude）
-  GET  /thumbs/{name}               取縮圖
-  GET  /images/{name}               取原圖
+  GET  /thumbs/{name}               取縮圖（讀取 token 即可，公開找圖頁用這個）
+  GET  /images/{name}               取『原圖』——需讀寫 token（防整庫高清被搬走）
 
-除了 /health、/、/thumbs、/images（讀圖）外，寫入端點需要 Bearer token
-（環境變數 POSEPLANNER_TOKEN；未設定則不檢查，僅建議在純內網時這樣）。
+讀取端點（/stats /search /thumbs）需『讀取』token（讀寫或唯讀皆可）。
+原圖 /images 與所有寫入端點需『讀寫』token（環境變數 POSEPLANNER_TOKEN；
+未設定則不檢查，僅建議在純內網時這樣）。/search、/stats 另有速率限制。
 """
 from __future__ import annotations
 
@@ -29,16 +30,20 @@ import os
 import zipfile
 from pathlib import Path
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import db
 
 DATA_DIR = Path(os.environ.get("POSEPLANNER_DATA", "/data"))
 IMAGES_DIR = DATA_DIR / "images"
 THUMBS_DIR = DATA_DIR / "thumbs"
-THUMB_MAX = 512
+THUMB_MAX = 1280   # 縮圖長邊上限；放大檢視夠清楚，又不外洩原圖（原圖端點已鎖讀寫 token）
 # 兩種權限的 token：
 #   POSEPLANNER_TOKEN       讀寫（入庫 + 查詢 + 取圖）
 #   POSEPLANNER_READ_TOKEN  唯讀（只能查詢 + 取圖，不能入庫）
@@ -61,6 +66,29 @@ app.add_middleware(
     allow_methods=["GET"],          # 前端只讀（/search /stats /thumbs /images）
     allow_headers=["*"],
 )
+
+# ── 速率限制（防有人寫腳本快速列舉整庫）─────────────────────────────
+# 只掛在「列舉成本高」的 /search、/stats 上；/thumbs、/images 不限速以免拖慢正常瀏覽。
+# 反向代理後面要拿到真實 IP：優先讀 X-Forwarded-For 第一段（單一可信代理時夠用；
+# 若代理不可信，這個 header 可被偽造繞過——那種情境請改在 nginx 層限速）。
+# 預設 60/分鐘；設環境變數 POSEPLANNER_SEARCH_RATE 調整，設 "10000/minute" 之類即等同關閉。
+SEARCH_RATE = os.environ.get("POSEPLANNER_SEARCH_RATE", "60/minute").strip() or "60/minute"
+
+
+def _client_key(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    return xff.split(",")[0].strip() if xff else get_remote_address(request)
+
+
+limiter = Limiter(key_func=_client_key)
+app.state.limiter = limiter
+
+
+def _ratelimit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "請求太頻繁，請稍後再試"})
+
+
+app.add_exception_handler(RateLimitExceeded, _ratelimit_handler)
 
 
 @app.on_event("startup")
@@ -118,7 +146,8 @@ def health() -> dict:
 
 
 @app.get("/stats")
-def stats(_: None = Depends(require_read)) -> dict:
+@limiter.limit(SEARCH_RATE)
+def stats(request: Request, _: None = Depends(require_read)) -> dict:
     with db.pool().connection() as conn:
         n_poses = conn.execute("SELECT COUNT(*) FROM poses").fetchone()[0]
         n_tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
@@ -338,7 +367,8 @@ async def update_pose_creators(
 
 
 @app.get("/search")
-def search(q: str = "", tag: list[str] | None = None, limit: int = 20, offset: int = 0,
+@limiter.limit(SEARCH_RATE)
+def search(request: Request, q: str = "", tag: list[str] | None = None, limit: int = 20, offset: int = 0,
           _: None = Depends(require_read)) -> JSONResponse:
     """tag（category=name，可多個 AND）+ 關鍵字（對 description 做 AND LIKE）粗篩候選。
     語意排序由 Claude 讀 description 完成——和 SQLite 版 search.py 同設計。
@@ -410,7 +440,9 @@ def get_thumb(name: str, _: None = Depends(require_read)):
 
 
 @app.get("/images/{name}")
-def get_image(name: str, _: None = Depends(require_read)):
+def get_image(name: str, _: None = Depends(require_write)):
+    # 原圖只給『讀寫』token（後台/入庫工具）。公開找圖頁只吃 /thumbs，
+    # 拿不到高清原圖——這是「別人能瀏覽、搬不走原圖」的主要防線。
     path = (IMAGES_DIR / name).resolve()
     if IMAGES_DIR.resolve() not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="找不到原圖")

@@ -20,6 +20,7 @@
   const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = window.Vue;
 
   const PAGE = 24;
+  const MAX_POSTS = 300;   // feed 累積上限：避免圖庫大時 DOM 無限長把手機拖卡；超過提示用搜尋縮小範圍
   const cfg = window.POSEPLANNER_CONFIG || null;
   const BASE = cfg && cfg.baseUrl ? String(cfg.baseUrl).replace(/\/+$/, "") : "";
   const TOKEN = cfg && cfg.token ? String(cfg.token) : "";
@@ -76,8 +77,8 @@
 
     return {
       id: item.id,
+      // 只用縮圖（1280px）：原圖端點已鎖讀寫 token，公開頁不暴露原圖網址。
       thumb: mediaUrl(item.thumbnail_path),
-      full: mediaUrl(item.image_path),
       desc: item.description || "",
       avatar: photographers.length ? "📷" : "👤",
       author: author ? author.name : "未署名",
@@ -98,6 +99,7 @@
       const posts = ref([]);
       const loading = ref(false);
       const done = ref(false);
+      const capped = ref(false);   // 已達 MAX_POSTS 累積上限（非真的沒資料了）
       const offset = ref(0);
       const activeTag = ref(null);
       const status = ref(null);
@@ -138,6 +140,7 @@
           posts.value.push(...items.map(normalize));
           offset.value += items.length;
           if (items.length < PAGE) done.value = true;
+          if (posts.value.length >= MAX_POSTS) { done.value = true; capped.value = true; }
         } catch (err) {
           setStatus("連線失敗：" + err.message +
             "　（請確認 server domain / 讀取 token 是否正確，server 是否開著）", true);
@@ -151,6 +154,7 @@
         posts.value = [];
         offset.value = 0;
         done.value = false;
+        capped.value = false;
         setStatus(null);
         loadPage();
       }
@@ -171,8 +175,8 @@
       });
 
       function openLightbox(p) {
-        if (!p.full) return;
-        lightbox.src = p.full; lightbox.cap = p.desc; lightbox.open = true;
+        if (!p.thumb) return;
+        lightbox.src = p.thumb; lightbox.cap = p.desc; lightbox.open = true;
         document.body.style.overflow = "hidden";
       }
       function closeLightbox() { lightbox.open = false; lightbox.src = ""; document.body.style.overflow = ""; }
@@ -198,7 +202,7 @@
       });
 
       return {
-        q, posts, loading, done, status, statusErr, lightbox, sentinel,
+        q, posts, loading, done, capped, status, statusErr, lightbox, sentinel,
         feedTitle, feedMeta, statsText, ready,
         search, onTag, clearSearch, openLightbox, closeLightbox,
       };
@@ -258,6 +262,7 @@
         </div>
 
         <div v-if="loading" class="more-spin">載入中…</div>
+        <div v-else-if="capped" class="more-spin">已顯示前 {{ posts.length }} 張 — 想找更多請用上方搜尋縮小範圍 🔍</div>
         <div ref="sentinel" class="sentinel"></div>
       </main>
 
