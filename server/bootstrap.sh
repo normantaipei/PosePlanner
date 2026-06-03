@@ -8,8 +8,9 @@
 #   1. 沒有 Docker 就用官方 get.docker.com 裝好 Docker + compose 外掛
 #   2. 沒有 git 就裝 git，然後把 repo clone 到 ~/PosePlanner（已存在就 git pull）
 #   3. server/.env 不存在就產一份，密碼與 token 用亂數自動產生
-#   4. docker compose up -d --build 把 PostgreSQL + 圖片接收服務拉起來
-#   5. 印出健康檢查結果，以及 Claude 端要用的 base-url 與 token
+#   4. 收掉自己的舊容器後挑一個沒被占用的對外埠（從 API_PORT 起自動往上避讓），寫回 .env
+#   5. docker compose up -d --build 把 PostgreSQL + 圖片接收服務拉起來
+#   6. 印出健康檢查結果，以及 Claude 端要用的 base-url 與 token
 #
 # 可用環境變數覆寫：
 #   POSEPLANNER_DIR   安裝目錄（預設 $HOME/PosePlanner）
@@ -51,6 +52,15 @@ find_free_port() {  # 從 $1 起往上找第一個沒被占用的埠
   echo "$start"  # 找不到就回原值，讓 compose 自己報錯
 }
 
+set_env_port() {  # 把 .env 的 API_PORT 設成 $1（沒有就新增）。不用 sed -i 以兼顧 GNU/BSD
+  local p="$1"
+  if [ -f .env ] && grep -qE '^API_PORT=' .env; then
+    grep -vE '^API_PORT=' .env > .env.tmp && echo "API_PORT=${p}" >> .env.tmp && mv .env.tmp .env
+  else
+    echo "API_PORT=${p}" >> .env
+  fi
+}
+
 # ── 1. Docker ───────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
   log "安裝 Docker（官方 get.docker.com）…"
@@ -90,21 +100,9 @@ fi
 
 cd "$DIR/server"
 
-# ── 3. 決定對外埠 + .env（亂數密鑰）─────────────────────────────────
-# 埠來源優先序：既有 .env > 自動避讓（從 API_PORT 起找沒被占用的）。
-# 這樣使用者的伺服器若已站了 8000（或你指定的埠），會自動往上換一個，不會撞車。
-if [ -f .env ] && grep -qE '^API_PORT=' .env; then
-  PORT="$(grep -E '^API_PORT=' .env | cut -d= -f2- | tr -d ' \r')"
-  log "server/.env 已存在，沿用其中的對外埠 ${PORT}。"
-else
-  PORT="$(find_free_port "$API_PORT")"
-  if [ "$PORT" != "$API_PORT" ]; then
-    log "埠 ${API_PORT} 已被占用，自動改用 ${PORT}。（要指定別的：API_PORT=<埠> 再跑一次）"
-  fi
-fi
-
+# ── 3. .env（亂數密鑰；埠稍後決定）──────────────────────────────────
 if [ ! -f .env ]; then
-  log "產生 server/.env（亂數密碼與 token，對外埠 ${PORT}）…"
+  log "產生 server/.env（亂數密碼與 token）…"
   PW="$(rand_hex)"
   TOKEN="$(rand_hex)$(rand_hex)"
   cat > .env <<EOF
@@ -112,16 +110,33 @@ POSTGRES_USER=poseplanner
 POSTGRES_PASSWORD=${PW}
 POSTGRES_DB=poseplanner
 POSEPLANNER_TOKEN=${TOKEN}
-API_PORT=${PORT}
+API_PORT=${API_PORT}
 EOF
 fi
 TOKEN="$(grep -E '^POSEPLANNER_TOKEN=' .env | cut -d= -f2-)"
 
-# ── 4. 啟動 ─────────────────────────────────────────────────────────
+# ── 4. 先收掉自己的舊容器，再決定對外埠（自動避讓）──────────────────
+# 為什麼先 down：否則我們自己上一輪還跑著的 api 容器也占著那個埠，會被誤判成「衝突」。
+# down 只移除容器/網路，**volume（Postgres 資料、圖片）會保留**，資料不丟。
+log "停掉本專案舊容器以釋放埠（volume 資料保留）…"
+$DOCKER_SUDO $COMPOSE down --remove-orphans >/dev/null 2>&1 || true
+
+# 想要的埠：.env 既有的 API_PORT 優先，否則用起始值。占用就自動往上換並寫回 .env。
+DESIRED="$API_PORT"
+if grep -qE '^API_PORT=' .env; then
+  DESIRED="$(grep -E '^API_PORT=' .env | cut -d= -f2- | tr -d ' \r')"
+fi
+PORT="$(find_free_port "$DESIRED")"
+if [ "$PORT" != "$DESIRED" ]; then
+  log "埠 ${DESIRED} 已被其他服務占用，自動改用 ${PORT}（已寫回 .env）。"
+fi
+set_env_port "$PORT"
+
+# ── 5. 啟動 ─────────────────────────────────────────────────────────
 log "建置並啟動容器（首次會拉映像、裝相依，請稍候）…"
 $DOCKER_SUDO $COMPOSE up -d --build
 
-# ── 5. 健康檢查 + 連線資訊 ─────────────────────────────────────────
+# ── 6. 健康檢查 + 連線資訊 ─────────────────────────────────────────
 log "等服務起來…"
 for i in $(seq 1 30); do
   if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
