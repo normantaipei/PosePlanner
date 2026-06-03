@@ -43,6 +43,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-poseplanner}
       POSTGRES_DB: ${POSTGRES_DB:-poseplanner}
       POSEPLANNER_TOKEN: ${POSEPLANNER_TOKEN:-}
+      POSEPLANNER_READ_TOKEN: ${POSEPLANNER_READ_TOKEN:-}
       POSEPLANNER_DATA: /data
     volumes:
       - media:/data

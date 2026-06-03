@@ -36,7 +36,11 @@ DATA_DIR = Path(os.environ.get("POSEPLANNER_DATA", "/data"))
 IMAGES_DIR = DATA_DIR / "images"
 THUMBS_DIR = DATA_DIR / "thumbs"
 THUMB_MAX = 512
-TOKEN = os.environ.get("POSEPLANNER_TOKEN", "").strip()
+# 兩種權限的 token：
+#   POSEPLANNER_TOKEN       讀寫（入庫 + 查詢 + 取圖）
+#   POSEPLANNER_READ_TOKEN  唯讀（只能查詢 + 取圖，不能入庫）
+RW_TOKEN = os.environ.get("POSEPLANNER_TOKEN", "").strip()
+RO_TOKEN = os.environ.get("POSEPLANNER_READ_TOKEN", "").strip()
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"}
 
 app = FastAPI(title="PosePlanner 私有 DB", version="1.0")
@@ -50,12 +54,30 @@ def _startup() -> None:
 
 
 # ── 認證 ────────────────────────────────────────────────────────────
-def require_token(authorization: str | None = Header(default=None)) -> None:
-    if not TOKEN:  # 未設 token → 純內網信任模式，不檢查
+# token 可走 Authorization: Bearer <token> 標頭，或 ?t=<token> query 參數
+# （後者讓對話裡的 <img> 縮圖網址也能帶讀取權限渲染）。
+def _provided_token(authorization: str | None, t: str | None) -> str:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:].strip()
+    return (t or "").strip()
+
+
+def require_write(authorization: str | None = Header(default=None), t: str | None = None) -> None:
+    """寫入端點：未設讀寫 token → 純內網信任不檢查；否則必須帶讀寫 token。"""
+    if not RW_TOKEN:
         return
-    expected = f"Bearer {TOKEN}"
-    if authorization != expected:
-        raise HTTPException(status_code=401, detail="缺少或錯誤的 Bearer token")
+    if _provided_token(authorization, t) != RW_TOKEN:
+        raise HTTPException(status_code=401, detail="需要『讀寫』token")
+
+
+def require_read(authorization: str | None = Header(default=None), t: str | None = None) -> None:
+    """讀取端點：兩個 token 都沒設 → 開放；否則讀寫或唯讀 token 皆可。"""
+    if not RW_TOKEN and not RO_TOKEN:
+        return
+    tok = _provided_token(authorization, t)
+    if tok and tok in {x for x in (RW_TOKEN, RO_TOKEN) if x}:
+        return
+    raise HTTPException(status_code=401, detail="需要『讀取』token（讀寫或唯讀皆可）")
 
 
 # ── 縮圖 ────────────────────────────────────────────────────────────
@@ -79,7 +101,7 @@ def health() -> dict:
 
 
 @app.get("/stats")
-def stats() -> dict:
+def stats(_: None = Depends(require_read)) -> dict:
     with db.pool().connection() as conn:
         n_poses = conn.execute("SELECT COUNT(*) FROM poses").fetchone()[0]
         n_tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
@@ -97,7 +119,7 @@ async def upload_image(
     favorite: bool = Form(default=False),
     embedding: str | None = Form(default=None),  # 選配 JSON 陣列（384 維）
     embedding_model: str | None = Form(default=None),
-    _: None = Depends(require_token),
+    _: None = Depends(require_write),
 ) -> JSONResponse:
     """收一張原圖 + metadata，直接入庫。content_hash 去重、產縮圖、存原圖。"""
     raw = await file.read()
@@ -156,7 +178,7 @@ async def upload_image(
 @app.post("/fragments")
 async def upload_fragment(
     file: UploadFile = File(...),
-    _: None = Depends(require_token),
+    _: None = Depends(require_write),
 ) -> JSONResponse:
     """收一個 pack 出來的 fragment zip（manifest.json + thumbs/）回放併庫。
     原圖不在 fragment 裡（雲端格式只帶縮圖），所以這條只記縮圖 + metadata。"""
@@ -216,7 +238,8 @@ async def upload_fragment(
 
 
 @app.get("/search")
-def search(q: str = "", tag: list[str] | None = None, limit: int = 20) -> JSONResponse:
+def search(q: str = "", tag: list[str] | None = None, limit: int = 20,
+          _: None = Depends(require_read)) -> JSONResponse:
     """tag（category=name，可多個 AND）+ 關鍵字（對 description 做 AND LIKE）粗篩候選。
     語意排序由 Claude 讀 description 完成——和 SQLite 版 search.py 同設計。"""
     tag = tag or []
@@ -273,7 +296,7 @@ def search(q: str = "", tag: list[str] | None = None, limit: int = 20) -> JSONRe
 
 
 @app.get("/thumbs/{name}")
-def get_thumb(name: str):
+def get_thumb(name: str, _: None = Depends(require_read)):
     path = (THUMBS_DIR / name).resolve()
     if THUMBS_DIR.resolve() not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="找不到縮圖")
@@ -281,7 +304,7 @@ def get_thumb(name: str):
 
 
 @app.get("/images/{name}")
-def get_image(name: str):
+def get_image(name: str, _: None = Depends(require_read)):
     path = (IMAGES_DIR / name).resolve()
     if IMAGES_DIR.resolve() not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="找不到原圖")

@@ -61,6 +61,14 @@ set_env_port() {  # 把 .env 的 API_PORT 設成 $1（沒有就新增）。不�
   fi
 }
 
+ensure_token() {  # .env 完全沒有這個 token 欄位就補一組亂數（讓舊版 .env 升級也有兩組 token）
+  local key="$1"
+  if ! grep -qE "^${key}=" .env; then
+    echo "${key}=$(rand_hex)$(rand_hex)" >> .env
+    log "偵測到 .env 缺 ${key}，已補上一組亂數 token。"
+  fi
+}
+
 # ── 1. Docker ───────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
   log "安裝 Docker（官方 get.docker.com）…"
@@ -102,18 +110,22 @@ cd "$DIR/server"
 
 # ── 3. .env（亂數密鑰；埠稍後決定）──────────────────────────────────
 if [ ! -f .env ]; then
-  log "產生 server/.env（亂數密碼與 token）…"
+  log "產生 server/.env（亂數密碼與兩組 token：讀寫 / 唯讀）…"
   PW="$(rand_hex)"
   TOKEN="$(rand_hex)$(rand_hex)"
+  READ_TOKEN="$(rand_hex)$(rand_hex)"
   cat > .env <<EOF
 POSTGRES_USER=poseplanner
 POSTGRES_PASSWORD=${PW}
 POSTGRES_DB=poseplanner
 POSEPLANNER_TOKEN=${TOKEN}
+POSEPLANNER_READ_TOKEN=${READ_TOKEN}
 API_PORT=${API_PORT}
 EOF
 fi
-TOKEN="$(grep -E '^POSEPLANNER_TOKEN=' .env | cut -d= -f2-)"
+# 既有（舊版）.env 可能只有一組 token → 補齊缺少的那組
+ensure_token POSEPLANNER_TOKEN
+ensure_token POSEPLANNER_READ_TOKEN
 
 # ── 4. 先收掉自己的舊容器，再決定對外埠（自動避讓）──────────────────
 # 為什麼先 down：否則我們自己上一輪還跑著的 api 容器也占著那個埠，會被誤判成「衝突」。
@@ -136,26 +148,13 @@ set_env_port "$PORT"
 log "建置並啟動容器（首次會拉映像、裝相依，請稍候）…"
 $DOCKER_SUDO $COMPOSE up -d --build
 
-# ── 6. 健康檢查 + 連線資訊 ─────────────────────────────────────────
+# ── 6. 健康檢查 + 連線資訊（含兩組 token + 給 Claude 的 prompt）────────
 log "等服務起來…"
 for i in $(seq 1 30); do
   if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
   sleep 2
 done
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP="${IP:-<這台VM的IP>}"
 echo
-echo "=================================================================="
-if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-  echo "✅ PosePlanner 私有 DB 已啟動（對外埠 ${PORT}）。"
-else
-  echo "⚠ 容器已啟動，但 /health 暫時沒回應。看 log：$COMPOSE logs -f api"
-fi
-echo "  健康檢查 ：http://localhost:${PORT}/health"
-echo "  網頁上傳 ：http://${IP}:${PORT}/"
-echo
-echo "在裝了 skill 的機器（Claude Code / Desktop）上設定後端："
-echo "  python3 scripts/backend.py set --backend selfhost \\"
-echo "      --base-url http://${IP}:${PORT} \\"
-echo "      --token ${TOKEN}"
-echo "=================================================================="
+# 連線資訊與兩組 token 統一由 show-info.sh 印出（之後想再查一次也跑這支）。
+bash ./show-info.sh

@@ -57,22 +57,29 @@ python3 scripts/backend.py status            # 確認連得到
 
 ## API
 
-| 方法 | 路徑 | 說明 | 需 token |
+| 方法 | 路徑 | 說明 | 權限 |
 |---|---|---|---|
-| GET | `/health` | 健康檢查 | 否 |
-| GET | `/` | 網頁上傳表單 | 否 |
-| GET | `/stats` | poses / tags 數 | 否 |
-| POST | `/images` | 收**一張原圖 + metadata** 直接入庫（去重、產縮圖、存原圖） | 是 |
-| POST | `/fragments` | 收一個 `pack` 出來的 fragment zip 回放併庫（相容雲端格式，只帶縮圖） | 是 |
-| GET | `/search?q=&tag=&limit=` | tag + 關鍵字粗篩候選（語意排序交給 Claude） | 否 |
-| GET | `/thumbs/{hash}.jpg` | 取縮圖 | 否 |
-| GET | `/images/{hash}.ext` | 取原圖 | 否 |
+| GET | `/health` | 健康檢查 | 公開 |
+| GET | `/` | 網頁上傳表單 | 公開 |
+| GET | `/stats` | poses / tags 數 | 讀取 |
+| POST | `/images` | 收**一張原圖 + metadata** 直接入庫（去重、產縮圖、存原圖） | 讀寫 |
+| POST | `/fragments` | 收一個 `pack` 出來的 fragment zip 回放併庫（相容雲端格式，只帶縮圖） | 讀寫 |
+| GET | `/search?q=&tag=&limit=` | tag + 關鍵字粗篩候選（語意排序交給 Claude） | 讀取 |
+| GET | `/thumbs/{hash}.jpg` | 取縮圖 | 讀取 |
+| GET | `/images/{hash}.ext` | 取原圖 | 讀取 |
 
 `/images` 的 multipart 欄位：`file`（圖）、`description`、`tags`（JSON 陣列
 `[{"category","name"},...]`）、選填 `source` / `rating` / `favorite` / `embedding` / `embedding_model`。
 
-寫入端點用 `Authorization: Bearer <token>`。`.env` 的 `POSEPLANNER_TOKEN` 留空則不檢查
-（純內網信任模式）。
+### 權限：兩組 token
+
+- **讀寫** token（`.env` 的 `POSEPLANNER_TOKEN`）：可入庫 + 查詢 + 取圖。
+- **唯讀** token（`POSEPLANNER_READ_TOKEN`）：只能查詢 + 取圖，**不能入庫**。
+- 兩個都留空 = 純內網信任模式（完全不檢查）。
+
+帶 token 兩種方式：`Authorization: Bearer <token>` 標頭，或 `?t=<token>` query 參數
+（後者讓對話裡的 `<img>` 縮圖網址也能帶讀取權限渲染——`backend.py search --table`
+會自動把設定的 token 接在縮圖網址後面）。
 
 ---
 

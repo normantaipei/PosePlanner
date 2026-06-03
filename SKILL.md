@@ -35,6 +35,9 @@ python3 scripts/backend.py status
   python3 scripts/backend.py set --backend selfhost \
       --base-url http://192.168.x.x:8000 --token <使用者的 token>
   ```
+  > 私有 DB 有兩組 token：**入庫**要用「讀寫」token（`POSEPLANNER_TOKEN`）；只搜尋不入庫的人用
+  > 「唯讀」token（`POSEPLANNER_READ_TOKEN`）。要入庫卻只拿到唯讀 token 時，`/images` 會回 401——
+  > 遇到就請使用者改用讀寫 token。token 請勿在回覆裡明文印出。
 - 之後的「上傳」與「搜尋」步驟**依後端分流**（見下方各步驟的 🅐/🅑 標記）。私有 DB 的架站說明見 [server/README.md](server/README.md)。
 
 > 看圖、產 description + tags 的流程**兩種後端完全一樣**；只有「資料落到哪」不同。

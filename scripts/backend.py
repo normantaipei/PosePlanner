@@ -330,6 +330,15 @@ def cmd_search(args) -> None:
         return
 
     base = sh["base_url"].rstrip("/")
+    token = (sh.get("token") or "").strip()
+
+    def media_url(rel: str) -> str:
+        # 讀取端點有 token 時，縮圖網址要帶 ?t=<token>，對話裡的 <img> 才載得到
+        url = f"{base}/{rel}"
+        if token:
+            url += "?t=" + urllib.parse.quote(token)
+        return url
+
     if not results:
         print("（沒有符合的 pose）")
         return
@@ -339,7 +348,7 @@ def cmd_search(args) -> None:
         print("|---|---|---|---|---|")
         for r in results:
             thumb = r.get("thumbnail_path")
-            cell = f"![#{r['id']}]({base}/{thumb})" if thumb else "—"
+            cell = f"![#{r['id']}]({media_url(thumb)})" if thumb else "—"
             signals = []
             if r.get("favorite"):
                 signals.append("★")
@@ -361,7 +370,7 @@ def cmd_search(args) -> None:
             print(f"  {r['description']}")
             print(f"  tags: {'、'.join(r.get('tags', [])) or '（無）'}")
             if r.get("thumbnail_path"):
-                print(f"  thumb: {base}/{r['thumbnail_path']}")
+                print(f"  thumb: {media_url(r['thumbnail_path'])}")
             print()
         print("→ 以上是粗篩候選；請依使用者的描述語意挑出最貼近的幾張。")
 
@@ -376,7 +385,8 @@ def main() -> None:
     ps = sub.add_parser("set", help="設定後端（drive / selfhost）")
     ps.add_argument("--backend", required=True, choices=["drive", "selfhost"])
     ps.add_argument("--base-url", help="selfhost server 位址，如 http://192.168.1.50:8000")
-    ps.add_argument("--token", help="selfhost Bearer token（對應 server .env 的 POSEPLANNER_TOKEN）")
+    ps.add_argument("--token", help="selfhost token：入庫端用『讀寫』token "
+                    "（POSEPLANNER_TOKEN）；只搜尋的人用『唯讀』token（POSEPLANNER_READ_TOKEN）")
     ps.set_defaults(func=cmd_set)
 
     pin = sub.add_parser("ingest", help="selfhost：manifest 裡的原圖逐張 POST /images")

@@ -94,20 +94,53 @@ Claude 端要貼的 `base-url` 與 `token`。跑完照著那段 `backend.py set 
 
 ```bash
 git clone https://github.com/normantaipei/PosePlanner.git && cd PosePlanner/server
-cp .env.example .env          # ⚠ 改掉 POSTGRES_PASSWORD 與 POSEPLANNER_TOKEN
+cp .env.example .env          # ⚠ 改掉 POSTGRES_PASSWORD / POSEPLANNER_TOKEN / POSEPLANNER_READ_TOKEN
 # 若 8000 已被占用，把 .env 的 API_PORT 改成沒人用的埠（如 8080）
 docker compose up -d --build
-curl http://localhost:8000/health     # 健康檢查（埠對應 .env 的 API_PORT）
+bash show-info.sh             # 印出 base-url + 兩組 token + 給 Claude 的初始化 prompt
 ```
+
+> `bash show-info.sh` 任何時候都能再印一次連線資訊與兩組 token（一鍵 `bootstrap.sh` 跑完也會自動印）。
+
+#### 兩組 token：讀寫 / 唯讀
+
+後端有兩種權限的 token（bootstrap 會各自亂數產生、印出來）：
+
+| token | 環境變數 | 能做什麼 |
+|---|---|---|
+| **讀寫** | `POSEPLANNER_TOKEN` | 入庫（`/images`、`/fragments`）＋ 查詢 ＋ 取圖 |
+| **唯讀** | `POSEPLANNER_READ_TOKEN` | 只能查詢（`/search`、`/stats`）＋ 取圖（`/thumbs`、`/images`），**不能入庫** |
+
+> 自己每天餵圖用**讀寫** token；想把庫開放給別人「只查不改」就給**唯讀** token。
+> 兩個都留空 = 純內網信任模式（完全不檢查）。
 
 #### 接上 Claude 端
 
-在裝了 skill 的機器上（把 IP / token 換成上面印出來的）：
+在裝了 skill 的機器上（把 IP / token 換成上面印出來的；入庫端用讀寫 token）：
 
 ```bash
 python3 scripts/backend.py set --backend selfhost \
-    --base-url http://<這台VM的內網IP>:8000 --token <你的 token>
+    --base-url http://<這台VM的內網IP>:8000 --token <讀寫或唯讀 token>
 python3 scripts/backend.py status     # 確認連得到
+```
+
+#### 📋 給 Claude 的初始化 prompt（讓它記得怎麼連後端）
+
+桌面版 / 手機版的雲端沙箱每次對話會重置，設定不一定留得住，所以**每個新對話開頭把這段貼給
+Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可）：
+
+```
+我的 PosePlanner 用「私有 DB」後端。請在開始任何入庫 / 搜尋前，先設定好連線：
+
+    python3 scripts/backend.py set --backend selfhost \
+        --base-url http://<VM內網IP>:<埠> --token <讀寫 token>
+    python3 scripts/backend.py status
+
+入庫：看完圖、寫好 manifest（_ingest.json）後，用
+    python3 scripts/backend.py ingest --manifest <manifest 路徑>
+（原圖會直接送進我的私有 DB，不走 Google Drive。）
+搜尋：python3 scripts/backend.py search "<描述>" --tag <維度=值> --table
+請勿在回覆裡明文印出 token。
 ```
 
 細節（API、備份、還原）見 [server/README.md](server/README.md)。
