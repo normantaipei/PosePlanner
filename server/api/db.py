@@ -18,6 +18,8 @@ SCHEMA_PATH = Path(os.environ.get("SCHEMA_PATH", HERE / "schema.sql"))
 TAXONOMY_PATH = Path(os.environ.get("TAXONOMY_PATH", "/app/taxonomy.yaml"))
 
 EMBED_DIM = 384
+# 創作者沒指定角色時的預設 role；常見值：model / photographer / retoucher…
+DEFAULT_CREATOR_ROLE = "creator"
 
 _pool: ConnectionPool | None = None
 
@@ -148,6 +150,138 @@ def resolve_tag(conn: psycopg.Connection, category: str, name: str, dims: set[st
     return row[0], True
 
 
+# ── 創作者：一張圖可多人，各帶 role（模特兒 / 攝影師…）────────────────
+def resolve_creator(
+    conn: psycopg.Connection,
+    name: str,
+    handle: str | None = None,
+    url: str | None = None,
+    note: str | None = None,
+) -> int:
+    """以 name 去重取得 creator id，沒有就建立。後來才補的 handle/url/note 只填空欄、不覆寫。"""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("creator name 不可為空")
+    handle = (handle or "").strip() or None
+    url = (url or "").strip() or None
+    note = (note or "").strip() or None
+
+    row = conn.execute("SELECT id FROM creators WHERE name=%s", (name,)).fetchone()
+    if row:
+        cid = row[0]
+        if handle or url or note:
+            conn.execute(
+                "UPDATE creators SET handle=COALESCE(handle,%s), url=COALESCE(url,%s), "
+                "note=COALESCE(note,%s) WHERE id=%s",
+                (handle, url, note, cid),
+            )
+        return cid
+    row = conn.execute(
+        "INSERT INTO creators(name, handle, url, note) VALUES (%s,%s,%s,%s) RETURNING id",
+        (name, handle, url, note),
+    ).fetchone()
+    return row[0]
+
+
+def _iter_creators(creators: list | None):
+    """把 [{"name","role","handle","url","note"}, ...] 正規化成
+    (name, role, handle, url, note)，略過沒有 name 的項。"""
+    for c in creators or []:
+        if not isinstance(c, dict):
+            continue
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        role = (c.get("role") or "").strip() or DEFAULT_CREATOR_ROLE
+        yield name, role, c.get("handle"), c.get("url"), c.get("note")
+
+
+def _link_creators(conn: psycopg.Connection, pose_id: int, creators: list | None) -> int:
+    """把一份創作者清單掛到 pose 上（以 (creator, role) 去重）。回傳處理筆數。"""
+    n = 0
+    for name, role, handle, url, note in _iter_creators(creators):
+        cid = resolve_creator(conn, name, handle, url, note)
+        conn.execute(
+            "INSERT INTO pose_creators(pose_id, creator_id, role) VALUES (%s,%s,%s) "
+            "ON CONFLICT DO NOTHING",
+            (pose_id, cid, role),
+        )
+        n += 1
+    return n
+
+
+def pose_creators(conn: psycopg.Connection, pose_id: int) -> list[dict]:
+    """讀一張 pose 的創作者清單：[{name, role, handle, url}, ...]（依 role、name 排序）。"""
+    return [
+        {"name": name, "role": role, "handle": handle, "url": url}
+        for name, role, handle, url in conn.execute(
+            "SELECT c.name, pc.role, c.handle, c.url FROM pose_creators pc "
+            "JOIN creators c ON c.id=pc.creator_id WHERE pc.pose_id=%s "
+            "ORDER BY pc.role, c.name",
+            (pose_id,),
+        ).fetchall()
+    ]
+
+
+def _resolve_creator_pairs(conn: psycopg.Connection, creators: list | None) -> set[tuple[int, str]]:
+    """把創作者清單解析成 (creator_id, role) 集合（給整批替換的差集計算用）。"""
+    out: set[tuple[int, str]] = set()
+    for name, role, handle, url, note in _iter_creators(creators):
+        cid = resolve_creator(conn, name, handle, url, note)
+        out.add((cid, role))
+    return out
+
+
+def update_pose_creators(
+    conn: psycopg.Connection,
+    pose_id: int,
+    *,
+    replace: list | None = None,
+    add: list | None = None,
+    remove: list | None = None,
+) -> dict | None:
+    """改一張 pose 的創作者。語意與 update_pose_tags 相同：
+    replace 有給 → 整批替換（add/remove 視為附加微調）；否則只套用 add / remove。
+    pose 不存在回 None；否則回 {added, removed, creators}（creators 為更新後完整清單）。"""
+    if conn.execute("SELECT 1 FROM poses WHERE id=%s", (pose_id,)).fetchone() is None:
+        return None
+
+    current = {
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT creator_id, role FROM pose_creators WHERE pose_id=%s", (pose_id,)
+        ).fetchall()
+    }
+    add_pairs = _resolve_creator_pairs(conn, add)
+    remove_pairs = _resolve_creator_pairs(conn, remove)
+
+    if replace is not None:
+        target = _resolve_creator_pairs(conn, replace) | add_pairs
+        target -= remove_pairs
+        to_add = target - current
+        to_remove = current - target
+    else:
+        to_add = add_pairs - remove_pairs
+        to_remove = remove_pairs - add_pairs
+
+    for cid, role in to_add:
+        conn.execute(
+            "INSERT INTO pose_creators(pose_id, creator_id, role) VALUES (%s,%s,%s) "
+            "ON CONFLICT DO NOTHING",
+            (pose_id, cid, role),
+        )
+    for cid, role in to_remove:
+        conn.execute(
+            "DELETE FROM pose_creators WHERE pose_id=%s AND creator_id=%s AND role=%s",
+            (pose_id, cid, role),
+        )
+    return {
+        "added": len(to_add),
+        "removed": len(to_remove),
+        "creators": pose_creators(conn, pose_id),
+    }
+
+
 def _embedding_literal(values) -> str | None:
     """把向量陣列轉成 pgvector 的字面量 '[a,b,...]'；維度不符回 None。"""
     if not values:
@@ -204,6 +338,8 @@ def upsert_pose(conn: psycopg.Connection, entry: dict, dims: set[str]) -> tuple[
             (pose_id, tag_id),
         )
         conn.execute("UPDATE tags SET usage_count = usage_count + 1 WHERE id=%s", (tag_id,))
+
+    _link_creators(conn, pose_id, entry.get("creators"))
 
     return pose_id, "added"
 

@@ -59,6 +59,25 @@ CREATE TABLE IF NOT EXISTS pose_tags (
   PRIMARY KEY (pose_id, tag_id)
 );
 
+-- ── 創作者：一張圖可記多人，各有角色（模特兒 / 攝影師…）──────────
+CREATE TABLE IF NOT EXISTS creators (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,            -- 創作者名稱 / 暱稱，去重鍵
+  handle      TEXT,                            -- 選填：社群帳號，如 @ig_handle
+  url         TEXT,                            -- 選填：作品集 / 社群連結
+  note        TEXT,                            -- 選填：備註
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- pose ↔ creator 多對多，關聯帶 role。role 放進主鍵：同一人在同一張圖
+-- 可同時是模特兒又是攝影師（自拍）也記得下。
+CREATE TABLE IF NOT EXISTS pose_creators (
+  pose_id    INTEGER NOT NULL REFERENCES poses(id)    ON DELETE CASCADE,
+  creator_id INTEGER NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL DEFAULT 'creator',         -- model / photographer / retoucher…
+  PRIMARY KEY (pose_id, creator_id, role)
+);
+
 -- ── 學習層（Phase 2，先建表）─────────────────────────────
 CREATE TABLE IF NOT EXISTS taste_clusters (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +123,7 @@ CREATE TABLE IF NOT EXISTS plan_items (
 CREATE INDEX IF NOT EXISTS idx_pose_tags_tag  ON pose_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tags_category  ON tags(category);
 CREATE INDEX IF NOT EXISTS idx_tags_status    ON tags(status);
+CREATE INDEX IF NOT EXISTS idx_pose_creators_creator ON pose_creators(creator_id);
 
 -- 刪 pose 時連帶清掉它在 vec0 表的向量（vec0 不支援 FK CASCADE，用 trigger 補）。
 CREATE TRIGGER IF NOT EXISTS trg_poses_del_vec

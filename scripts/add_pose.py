@@ -88,6 +88,9 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"
 EMBED_DIM = 384
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
+# 創作者沒指定角色時的預設 role；常見值：model / photographer / retoucher…
+DEFAULT_CREATOR_ROLE = "creator"
+
 
 # ── taxonomy 載入 ───────────────────────────────────────────────────
 def load_taxonomy() -> dict:
@@ -200,6 +203,56 @@ def resolve_tag(conn: sqlite3.Connection, category: str, name: str, dims: dict) 
         (name, category, status),
     )
     return cur.lastrowid, True
+
+
+# ── 創作者：一張圖可多人，各帶 role（模特兒 / 攝影師…）────────────────
+def resolve_creator(conn: sqlite3.Connection, name: str, handle: str | None = None,
+                    url: str | None = None, note: str | None = None) -> int:
+    """以 name 去重取得 creator id，沒有就建立。後補的 handle/url/note 只填空欄、不覆寫。"""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("creator name 不可為空")
+    handle = (handle or "").strip() or None
+    url = (url or "").strip() or None
+    note = (note or "").strip() or None
+
+    row = conn.execute("SELECT id FROM creators WHERE name=?", (name,)).fetchone()
+    if row:
+        cid = row[0]
+        if handle or url or note:
+            conn.execute(
+                "UPDATE creators SET handle=COALESCE(handle,?), url=COALESCE(url,?), "
+                "note=COALESCE(note,?) WHERE id=?",
+                (handle, url, note, cid),
+            )
+        return cid
+    cur = conn.execute(
+        "INSERT INTO creators(name, handle, url, note) VALUES (?,?,?,?)",
+        (name, handle, url, note),
+    )
+    return cur.lastrowid
+
+
+def link_creators(conn: sqlite3.Connection, pose_id: int, creators: list | None,
+                  st: "Stats | None" = None) -> int:
+    """把一份創作者清單 [{name, role, handle?, url?}, ...] 掛到 pose 上（(creator, role) 去重）。"""
+    n = 0
+    for c in creators or []:
+        if not isinstance(c, dict):
+            print(f"    ⚠ 略過壞 creator：{c!r}"); continue
+        name = (c.get("name") or "").strip()
+        if not name:
+            print(f"    ⚠ 略過缺 name 的 creator：{c!r}"); continue
+        role = (c.get("role") or "").strip() or DEFAULT_CREATOR_ROLE
+        cid = resolve_creator(conn, name, c.get("handle"), c.get("url"), c.get("note"))
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO pose_creators(pose_id, creator_id, role) VALUES (?,?,?)",
+            (pose_id, cid, role),
+        )
+        if cur.rowcount and st is not None:
+            st.creators.add(f"{role}:{name}")
+        n += 1
+    return n
 
 
 # ── 圖片：hash / 複製 / 縮圖 ────────────────────────────────────────
@@ -325,6 +378,7 @@ class Stats:
         self.errors = 0
         self.added_chars: set[str] = set()
         self.new_tag_labels: list[str] = []
+        self.creators: set[str] = set()        # 本批新掛上的「role:name」
 
 
 def ingest_one(conn: sqlite3.Connection, entry: dict, dims: dict, base: Path, st: Stats,
@@ -380,6 +434,9 @@ def ingest_one(conn: sqlite3.Connection, entry: dict, dims: dict, base: Path, st
             if category == "character":
                 st.added_chars.add(name)
 
+    # 創作者（選配）：模特兒 / 攝影師…一張圖可多人
+    link_creators(conn, pose_id, entry.get("creators"), st)
+
     # 向量（選配）：優先用 manifest 帶來的，其次才是 --embed 本地算
     vec = vec_from_list(entry.get("embedding") or [], model=entry.get("embedding_model") or "external")
     if not vec and embed:
@@ -406,6 +463,18 @@ def cmd_ingest(args) -> None:
     _run_entries(entries, base, embed=getattr(args, "embed", False))
 
 
+def _parse_creator_flags(flags: list | None) -> list[dict]:
+    """把 --creator 旗標解析成 [{"name","role"}, ...]。格式：name=role 或只給 name（role 用預設）。"""
+    creators = []
+    for kv in flags or []:
+        if "=" in kv:
+            name, role = kv.split("=", 1)
+            creators.append({"name": name.strip(), "role": role.strip() or DEFAULT_CREATOR_ROLE})
+        else:
+            creators.append({"name": kv.strip(), "role": DEFAULT_CREATOR_ROLE})
+    return creators
+
+
 def cmd_add(args) -> None:
     tags = []
     for kv in args.tag or []:
@@ -417,6 +486,7 @@ def cmd_add(args) -> None:
         "image": args.image,
         "description": args.description,
         "tags": tags,
+        "creators": _parse_creator_flags(args.creator),
         "source": args.source,
         "rating": args.rating,
         "favorite": args.favorite,
@@ -453,6 +523,8 @@ def build_summary(conn: sqlite3.Connection, st: Stats) -> str:
         parts.append(f"失敗 {st.errors} 張")
     if st.added_chars:
         parts.append("新增角色：" + "、".join(sorted(st.added_chars)))
+    if st.creators:
+        parts.append("創作者：" + "、".join(sorted(st.creators)))
     if st.new_tag_labels:
         shown = "、".join(st.new_tag_labels[:8])
         more = f" 等 {len(st.new_tag_labels)} 個" if len(st.new_tag_labels) > 8 else ""
@@ -524,6 +596,7 @@ def cmd_pack(args) -> None:
                 "content_hash": content_hash,
                 "description": description,
                 "tags": tags,
+                "creators": entry.get("creators") or [],
                 "source": entry.get("source") or src.name,
                 "rating": entry.get("rating"),
                 "favorite": bool(entry.get("favorite")),
@@ -600,6 +673,8 @@ def compact_one(conn: sqlite3.Connection, entry: dict, dims: dict, frag_dir: Pat
             st.new_tag_labels.append(f"{category}:{name}{flag}")
             if category == "character":
                 st.added_chars.add(name)
+
+    link_creators(conn, pose_id, entry.get("creators"), st)
 
     vec = vec_from_list(entry.get("embedding") or [],
                         model=entry.get("embedding_model") or "external")
@@ -678,8 +753,10 @@ def cmd_stats(args) -> None:
     n_emb = conn.execute("SELECT COUNT(*) FROM pose_vectors").fetchone()[0]
     n_tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
     n_prop = conn.execute("SELECT COUNT(*) FROM tags WHERE status='proposed'").fetchone()[0]
+    n_creators = conn.execute("SELECT COUNT(*) FROM creators").fetchone()[0]
     print(f"poses：{n_poses}（有向量 {n_emb}）")
     print(f"tags ：{n_tags}（proposed {n_prop}）")
+    print(f"創作者：{n_creators}")
     print("\n熱門 tag：")
     for cat, name, uc in conn.execute(
         "SELECT category, name, usage_count FROM tags "
@@ -715,6 +792,8 @@ def main() -> None:
     pa.add_argument("--image", required=True)
     pa.add_argument("--description", required=True)
     pa.add_argument("--tag", action="append", help="category=name，可重複")
+    pa.add_argument("--creator", action="append",
+                    help="創作者，格式 name=role（role 如 model/photographer），可重複；只給 name 則用預設角色")
     pa.add_argument("--source")
     pa.add_argument("--rating", type=int)
     pa.add_argument("--favorite", action="store_true")
