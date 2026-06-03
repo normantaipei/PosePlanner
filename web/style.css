@@ -55,7 +55,14 @@ body {
 .searchbar input {
   flex: 1; border: 0; outline: 0; background: transparent;
   font-size: 16px;       /* ≥16px 才不會讓 iOS Safari 自動放大頁面 */
-  color: var(--ink); min-width: 0;
+  color: var(--ink); min-width: 0; width: 100%;
+  -webkit-appearance: none; appearance: none;   /* 去掉 iOS search 預設外觀，免得右側凸出 */
+  margin: 0; padding: 0;
+}
+/* iOS/WebKit 原生 search 的清除鈕與裝飾會佔右側空間，關掉用自家 ✕ */
+.searchbar input::-webkit-search-cancel-button,
+.searchbar input::-webkit-search-decoration {
+  -webkit-appearance: none; appearance: none;
 }
 .clear-btn {
   border: 0; background: transparent; color: var(--ink-soft); cursor: pointer;
