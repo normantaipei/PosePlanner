@@ -107,6 +107,8 @@
       const stats = ref(null);
       const ready = ref(false);            // 設定 OK，可以查
       const lightbox = reactive({ open: false, src: "", cap: "" });
+      const drawerOpen = ref(false);      // 左側漢堡選單抽屜
+      const devOpen = ref(false);         // 開發者資訊彈窗
       const sentinel = ref(null);
       const expanded = reactive({});      // post.id -> 是否展開完整敘述
       const overflowing = reactive({});   // post.id -> 敘述是否超過收束行數（才顯示「更多」）
@@ -193,6 +195,13 @@
       }
       function closeLightbox() { lightbox.open = false; lightbox.src = ""; document.body.style.overflow = ""; }
 
+      // ── 漢堡選單抽屜 / 開發者資訊 ──────────────────────
+      function openDrawer() { drawerOpen.value = true; document.body.style.overflow = "hidden"; }
+      function closeDrawer() { drawerOpen.value = false; if (!devOpen.value) document.body.style.overflow = ""; }
+      function goHome() { closeDrawer(); clearSearch(); }                 // 搜尋主頁＝清掉搜尋回到推薦 feed
+      function openDev() { drawerOpen.value = false; devOpen.value = true; document.body.style.overflow = "hidden"; }
+      function closeDev() { devOpen.value = false; document.body.style.overflow = ""; }
+
       async function loadStats() {
         try { stats.value = await apiGet("/stats", {}); } catch { /* 靜默 */ }
       }
@@ -204,7 +213,12 @@
           return;
         }
         ready.value = true;
-        document.addEventListener("keydown", (e) => { if (e.key === "Escape" && lightbox.open) closeLightbox(); });
+        document.addEventListener("keydown", (e) => {
+          if (e.key !== "Escape") return;
+          if (lightbox.open) closeLightbox();
+          else if (devOpen.value) closeDev();
+          else if (drawerOpen.value) closeDrawer();
+        });
         const io = new IntersectionObserver(
           (entries) => { if (entries.some((en) => en.isIntersecting)) loadPage(); },
           { rootMargin: "600px 0px" });
@@ -216,12 +230,17 @@
       return {
         q, posts, loading, done, capped, status, statusErr, lightbox, sentinel,
         feedTitle, feedMeta, statsText, ready, expanded, overflowing,
+        drawerOpen, devOpen,
         search, onTag, clearSearch, openLightbox, closeLightbox, setCapRef, toggleExpand,
+        openDrawer, closeDrawer, goHome, openDev, closeDev,
       };
     },
     template: `
       <header class="topbar">
         <div class="bar-inner">
+          <button class="hamburger" type="button" title="選單" aria-label="開啟選單" @click="openDrawer">
+            <span></span><span></span><span></span>
+          </button>
           <a class="brand" href="#" @click.prevent="clearSearch">
             <span class="logo">📸</span><span class="brand-name">PosePlanner</span>
           </a>
@@ -282,6 +301,34 @@
         <div v-else-if="capped" class="more-spin">已顯示前 {{ posts.length }} 張 — 想找更多請用上方搜尋縮小範圍 🔍</div>
         <div ref="sentinel" class="sentinel"></div>
       </main>
+
+      <!-- 左側漢堡抽屜 -->
+      <div class="drawer-root" :class="{ open: drawerOpen }">
+        <div class="drawer-scrim" @click="closeDrawer"></div>
+        <nav class="drawer" aria-label="主選單">
+          <div class="drawer-head">
+            <span class="logo">📸</span><span class="drawer-title">PosePlanner</span>
+            <button class="drawer-x" type="button" title="關閉" @click="closeDrawer">✕</button>
+          </div>
+          <ul class="drawer-menu">
+            <li><button type="button" @click="goHome"><span class="mi">🏠</span>搜尋主頁</button></li>
+            <li><button type="button" @click="openDev"><span class="mi">🛠️</span>開發者資訊</button></li>
+          </ul>
+        </nav>
+      </div>
+
+      <!-- 開發者資訊 -->
+      <div v-if="devOpen" class="modal" @click.self="closeDev">
+        <div class="modal-card">
+          <button class="modal-x" type="button" title="關閉" @click="closeDev">✕</button>
+          <h3>開發者資訊</h3>
+          <p class="dev-line"><b>專案</b>　PosePlanner — Cosplay 拍攝參考庫</p>
+          <p class="dev-line"><b>前端</b>　Vue 3（純前端，零建構）</p>
+          <p class="dev-line"><b>後端</b>　Python + sqlite-vec 語意搜尋</p>
+          <p class="dev-line"><b>庫狀態</b>　{{ statsText || '—' }}</p>
+          <p class="dev-foot">純雲端設計，圖片儲存於使用者的 Google Drive。</p>
+        </div>
+      </div>
 
       <div v-if="lightbox.open" class="lightbox" @click.self="closeLightbox">
         <button class="lb-close" title="關閉" @click="closeLightbox">✕</button>

@@ -40,6 +40,15 @@ body {
   max-width: 1080px; margin: 0 auto; padding: 10px 12px;
   display: flex; align-items: center; gap: 10px;
 }
+/* 漢堡鈕：三條線，點開左側抽屜 */
+.hamburger {
+  flex: none; width: 40px; height: 40px; border: 0; background: transparent; cursor: pointer;
+  display: grid; place-content: center; gap: 5px; border-radius: 10px; padding: 0;
+}
+.hamburger span { display: block; width: 22px; height: 2px; border-radius: 2px; background: var(--ink); }
+.hamburger:active { background: var(--chip); }
+@media (hover: hover) { .hamburger:hover { background: var(--chip); } }
+
 .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--brand-ink); flex: none; }
 .logo { font-size: 24px; }
 .brand-name { font-weight: 800; font-size: 19px; letter-spacing: .2px; }
@@ -180,6 +189,65 @@ body {
 }
 @media (hover: hover) { .lb-close:hover { background: rgba(255,255,255,.28); } }
 .lb-close:active { background: rgba(255,255,255,.35); }
+
+/* ── 左側漢堡抽屜 ──────────────────────────────────── */
+.drawer-root { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.drawer-root.open { pointer-events: auto; }
+.drawer-scrim {
+  position: absolute; inset: 0; background: rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .2s ease;
+}
+.drawer-root.open .drawer-scrim { opacity: 1; }
+.drawer {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: min(78vw, 300px);
+  background: var(--card); box-shadow: 2px 0 16px rgba(0,0,0,.18);
+  padding-top: env(safe-area-inset-top);
+  transform: translateX(-100%); transition: transform .24s ease;
+  display: flex; flex-direction: column;
+}
+.drawer-root.open .drawer { transform: none; }
+.drawer-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 16px 16px 14px; border-bottom: 1px solid var(--line);
+}
+.drawer-title { font-weight: 800; font-size: 18px; color: var(--brand-ink); }
+.drawer-x {
+  margin-left: auto; border: 0; background: transparent; color: var(--ink-soft);
+  font-size: 17px; cursor: pointer; width: 36px; height: 36px; border-radius: 8px;
+}
+@media (hover: hover) { .drawer-x:hover { background: var(--chip); color: var(--ink); } }
+.drawer-menu { list-style: none; margin: 8px 0 0; padding: 0; }
+.drawer-menu button {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  border: 0; background: transparent; cursor: pointer; text-align: left;
+  padding: 14px 18px; font-size: 15px; color: var(--ink); font-weight: 600;
+}
+.drawer-menu .mi { font-size: 18px; width: 22px; text-align: center; }
+.drawer-menu button:active { background: var(--chip); }
+@media (hover: hover) { .drawer-menu button:hover { background: var(--chip); } }
+
+/* ── 開發者資訊彈窗 ────────────────────────────────── */
+.modal {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(0,0,0,.5); display: grid; place-items: center; padding: 16px;
+}
+.modal-card {
+  position: relative; background: var(--card); border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  width: min(92vw, 420px); padding: 22px 22px 20px;
+}
+.modal-card h3 { margin: 0 0 14px; font-size: 18px; font-weight: 800; }
+.modal-x {
+  position: absolute; top: 10px; right: 10px;
+  border: 0; background: transparent; color: var(--ink-soft);
+  font-size: 17px; cursor: pointer; width: 36px; height: 36px; border-radius: 8px;
+}
+@media (hover: hover) { .modal-x:hover { background: var(--chip); color: var(--ink); } }
+.dev-line { margin: 8px 0; font-size: 14px; line-height: 1.6; color: var(--ink); }
+.dev-line b { color: var(--ink-soft); font-weight: 700; margin-right: 4px; }
+.dev-foot { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
 
 /* 進場淡入（尊重「減少動態」偏好設定）*/
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
