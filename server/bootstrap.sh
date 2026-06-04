@@ -96,6 +96,19 @@ add_docker_apt_repo() {
   $SUDO apt-get update -y || return 1
 }
 
+# 直接抓 Docker 官方 compose v2 binary（單一執行檔，零 apt/python 依賴），
+# 放進 docker cli-plugins。用在「apt 兩條路都不通」的機器（如 python3-distutils 已被移除）。
+install_compose_binary() {
+  command -v curl >/dev/null 2>&1 || $SUDO apt-get install -y curl ca-certificates || return 1
+  local arch dir
+  arch="$(uname -m)"   # x86_64 / aarch64 / armv7l 直接對得上官方 asset 命名
+  dir="/usr/local/lib/docker/cli-plugins"
+  $SUDO install -m 0755 -d "$dir" || return 1
+  $SUDO curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+    -o "$dir/docker-compose" || return 1
+  $SUDO chmod +x "$dir/docker-compose" || return 1
+}
+
 # compose：優先 docker compose（外掛），退而 docker-compose
 if docker compose version >/dev/null 2>&1; then
   COMPOSE="docker compose"
@@ -105,18 +118,22 @@ else
   # 逐步退讓地安裝，任何一步成功就停：
   #  1) 直接裝官方外掛（機器若已有 Docker 官方來源，這步就成）
   #  2) 加 Docker 官方 apt 來源後再裝外掛（docker.io 裝出來的 Docker 多半缺這來源）
-  #  3) 退到 Debian 內建的 docker-compose（v1，舊但夠用）
+  #  3) 直接抓官方 compose v2 binary（零依賴，繞開 apt/python 的雷）
+  #  4) 退到 Debian 內建的 docker-compose（v1；新系統因缺 python3-distutils 常裝不起來，放最後）
   log "安裝 docker compose…"
   $SUDO apt-get update -y || true
   if $SUDO apt-get install -y docker-compose-plugin 2>/dev/null && docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
   elif add_docker_apt_repo && $SUDO apt-get install -y docker-compose-plugin 2>/dev/null && docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
+  elif install_compose_binary && docker compose version >/dev/null 2>&1; then
+    log "已安裝 Docker 官方 compose v2 binary。"
+    COMPOSE="docker compose"
   elif $SUDO apt-get install -y docker-compose 2>/dev/null && command -v docker-compose >/dev/null 2>&1; then
     log "改用 Debian 內建的 docker-compose（v1）。"
     COMPOSE="docker-compose"
   else
-    die "裝不起來 docker compose。請手動擇一安裝後重跑：\n  sudo apt-get install -y docker-compose-plugin   （需 Docker 官方 apt 來源）\n  sudo apt-get install -y docker-compose           （Debian 內建 v1）"
+    die "裝不起來 docker compose。請手動擇一安裝後重跑：\n  sudo apt-get install -y docker-compose-plugin   （需 Docker 官方 apt 來源）\n  下載官方 binary： https://github.com/docker/compose/releases/latest"
   fi
 fi
 # 非 root 又還沒進 docker 群組時，這支腳本內仍用 sudo 跑 docker
