@@ -15,6 +15,10 @@ services:
   db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    # socket 放 /tmp（不放預設 /var/run/postgresql）：在 Proxmox 非特權 LXC 裡跑 Docker 時，
+    # uid mapping 會讓容器內 postgres 無法在 /var/run/postgresql 建 unix socket（Permission denied）。
+    # 改 /tmp 可繞開；一般主機也無害。api 走 TCP，不受影響。
+    command: ["-c", "unix_socket_directories=/tmp"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-poseplanner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-poseplanner}
@@ -22,7 +26,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-poseplanner} -d ${POSTGRES_DB:-poseplanner}"]
+      # 走 TCP 而非預設 unix socket，配合上面 socket 改位
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-poseplanner} -d ${POSTGRES_DB:-poseplanner}"]
       interval: 5s
       timeout: 5s
       retries: 10
