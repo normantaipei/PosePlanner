@@ -13,7 +13,11 @@ WORKDIR /app
 # --ignore-scripts：跳過 postinstall 的 `nuxt prepare`（此時還沒 COPY 原始碼會失敗）；
 # 接著的 `npm run build` 自己會做 prepare。
 COPY package.json ./
-RUN npm install --ignore-scripts --no-audit --no-fund
+# 裝完後補上 esbuild 原生檔的執行權限：npm 在某些環境（如 Proxmox LXC）裝 optional
+# 原生套件時，巢狀位置那份 @esbuild/*/bin/esbuild 不會被設 +x（npm/cli#4828 那類 bug），
+# build 時 vite 去 spawn 它就 EACCES。把所有（含巢狀）esbuild 原生檔都補成可執行。
+RUN npm install --ignore-scripts --no-audit --no-fund \
+ && find node_modules -path '*@esbuild/*/bin/esbuild' -exec chmod +x {} +
 COPY . .
 RUN npm run build
 
