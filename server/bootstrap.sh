@@ -26,6 +26,7 @@ API_PORT="${API_PORT:-8000}"
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
 log() { printf '\n\033[1;36m▸ %s\033[0m\n' "$*"; }
+die() { printf '\n\033[1;31m✗ %b\033[0m\n' "$*" >&2; exit 1; }
 
 rand_hex() {  # 32 hex 字元，優先 openssl，退而用 /dev/urandom
   if command -v openssl >/dev/null 2>&1; then openssl rand -hex 16
@@ -78,15 +79,45 @@ else
   log "Docker 已安裝，略過。"
 fi
 
+# 把 Docker 官方 apt 來源加進去（docker-compose-plugin 只在官方來源才有）。
+# 用在「Docker 是用 Debian 的 docker.io 裝的、官方來源沒被 get.docker.com 加過」的機器。
+add_docker_apt_repo() {
+  command -v curl >/dev/null 2>&1 || $SUDO apt-get install -y curl ca-certificates || return 1
+  local codename arch
+  codename="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+  [ -n "$codename" ] || return 1
+  arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+  $SUDO install -m 0755 -d /etc/apt/keyrings || return 1
+  curl -fsSL https://download.docker.com/linux/debian/gpg \
+    | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg || return 1
+  $SUDO chmod a+r /etc/apt/keyrings/docker.gpg || true
+  echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${codename} stable" \
+    | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null || return 1
+  $SUDO apt-get update -y || return 1
+}
+
 # compose：優先 docker compose（外掛），退而 docker-compose
 if docker compose version >/dev/null 2>&1; then
   COMPOSE="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
 else
-  log "安裝 docker compose 外掛…"
-  $SUDO apt-get update -y && $SUDO apt-get install -y docker-compose-plugin
-  COMPOSE="docker compose"
+  # 逐步退讓地安裝，任何一步成功就停：
+  #  1) 直接裝官方外掛（機器若已有 Docker 官方來源，這步就成）
+  #  2) 加 Docker 官方 apt 來源後再裝外掛（docker.io 裝出來的 Docker 多半缺這來源）
+  #  3) 退到 Debian 內建的 docker-compose（v1，舊但夠用）
+  log "安裝 docker compose…"
+  $SUDO apt-get update -y || true
+  if $SUDO apt-get install -y docker-compose-plugin 2>/dev/null && docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+  elif add_docker_apt_repo && $SUDO apt-get install -y docker-compose-plugin 2>/dev/null && docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+  elif $SUDO apt-get install -y docker-compose 2>/dev/null && command -v docker-compose >/dev/null 2>&1; then
+    log "改用 Debian 內建的 docker-compose（v1）。"
+    COMPOSE="docker-compose"
+  else
+    die "裝不起來 docker compose。請手動擇一安裝後重跑：\n  sudo apt-get install -y docker-compose-plugin   （需 Docker 官方 apt 來源）\n  sudo apt-get install -y docker-compose           （Debian 內建 v1）"
+  fi
 fi
 # 非 root 又還沒進 docker 群組時，這支腳本內仍用 sudo 跑 docker
 DOCKER_SUDO=""
