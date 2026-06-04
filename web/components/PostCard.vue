@@ -9,6 +9,7 @@ const emit = defineEmits<{
 }>()
 
 const expanded = ref(false)
+const tagsOpen = ref(false)
 const overflowing = ref(false)
 const capEl = ref<HTMLElement | null>(null)
 
@@ -54,7 +55,7 @@ onMounted(measure)
           {{ expanded ? '收起' : '… 更多' }}
         </button>
       </div>
-      <div class="chips">
+      <div v-if="post.roleChips.length" class="chips">
         <span
           v-for="c in post.roleChips"
           :key="c.role + c.name"
@@ -63,14 +64,28 @@ onMounted(measure)
         >
           {{ c.role }}：{{ c.name }}
         </span>
+      </div>
+
+      <div v-if="post.tagChips.length" class="tags">
         <button
-          v-for="t in post.tagChips"
-          :key="t.raw"
-          class="chip"
-          @click="emit('tag', t.raw)"
+          type="button"
+          class="tags-toggle"
+          :aria-expanded="tagsOpen"
+          @click="tagsOpen = !tagsOpen"
         >
-          #{{ t.val }}
+          <span class="caret" :class="{ open: tagsOpen }">▸</span>
+          標籤 {{ post.tagChips.length }}
         </button>
+        <div v-show="tagsOpen" class="chips tags-list">
+          <button
+            v-for="t in post.tagChips"
+            :key="t.raw"
+            class="chip"
+            @click="emit('tag', t.raw)"
+          >
+            #{{ t.val }}
+          </button>
+        </div>
       </div>
     </div>
   </article>

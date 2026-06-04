@@ -154,6 +154,17 @@ body {
 }
 @media (hover: hover) { .more-link:hover { color: var(--ink); } }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 標籤收放：箭頭按鈕點開才顯示 tag chips */
+.tags { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.tags-toggle {
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink-soft); font-size: 13px; line-height: 1.4; font-weight: 600;
+}
+@media (hover: hover) { .tags-toggle:hover { color: var(--ink); } }
+.caret { display: inline-block; transition: transform .15s; font-size: 11px; }
+.caret.open { transform: rotate(90deg); }
 .chip {
   font-size: 13px; padding: 7px 12px; border-radius: 999px; line-height: 1;
   background: var(--chip); color: var(--chip-ink); cursor: pointer; border: 0;
