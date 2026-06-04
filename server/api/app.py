@@ -56,8 +56,15 @@ RO_TOKEN = os.environ.get("POSEPLANNER_READ_TOKEN", "").strip()
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"}
 
 # repo 根（含 SKILL.md / scripts / vendor），給 /skill 即時打包用。
-# 容器內由 compose 以 ../:/repo:ro 掛進來；本機跑時退回 app.py 上溯的 repo 根。
-REPO_DIR = Path(os.environ.get("POSEPLANNER_REPO", str(Path(__file__).resolve().parents[2])))
+# 容器內由 compose 以 ../:/repo:ro 掛進來（POSEPLANNER_REPO=/repo）；本機跑時退回
+# app.py 上溯的 repo 根。注意：別把 fallback 寫成 dict.get 的預設值——那會被「立即求值」，
+# 在容器裡 app.py 位於 /app（parents 只有 /app、/），parents[2] 會 IndexError 而炸掉啟動。
+def _default_repo_dir() -> Path:
+    parents = Path(__file__).resolve().parents
+    return parents[2] if len(parents) > 2 else Path("/repo")
+
+
+REPO_DIR = Path(os.environ["POSEPLANNER_REPO"]) if os.environ.get("POSEPLANNER_REPO") else _default_repo_dir()
 # 跟 scripts/build_skill_zip.sh 同一份清單；改一邊要同步另一邊。
 SKILL_FILES = [
     "SKILL.md", "taxonomy.yaml", "requirements.txt",
