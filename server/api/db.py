@@ -44,24 +44,40 @@ def pool() -> ConnectionPool:
     return _pool
 
 
-def wait_and_init(retries: int = 30, delay: float = 2.0) -> None:
-    """等 Postgres 起來 → 套 schema → seed taxonomy。啟動時呼叫，冪等可重跑。"""
+def _probe(connect_timeout: int = 3) -> None:
+    """用短逾時的直接連線確認 Postgres 真的可連、可認證（含密碼）。
+
+    為什麼不用連線池：ConnectionPool 的 .connection() 預設要等 30 秒才逾時，DB
+    還沒好或密碼不符時，每次重試都會卡滿 30 秒，整個 startup 看起來像「死當」、
+    body 都不回。直接連線帶 connect_timeout，失敗就快速彈出、進下一輪重試。
+    注意：db 容器的 healthcheck（pg_isready）只確認「能連」，不驗密碼；密碼對不對
+    要靠這裡真的連一次才知道。
+    """
+    with psycopg.connect(dsn(), connect_timeout=connect_timeout, autocommit=True) as conn:
+        conn.execute("SELECT 1")
+
+
+def wait_and_init(retries: int = 60, delay: float = 2.0) -> None:
+    """等 Postgres 起來 → 套 schema → seed taxonomy。啟動時呼叫，冪等可重跑。
+
+    整段（連線確認 + schema + seed）都包在重試裡：Postgres「首次初始化」會先起一個
+    暫時 server 再重啟，期間連線可能成功一下又斷掉；只重試最初的 SELECT 1 會在
+    schema/seed 階段踩到斷線而失敗（這就是「乾淨環境第一次跑必失敗、第二次才正常」
+    的根因——第二次 volume 已初始化好，不再有這段重啟）。
+    """
     last_err: Exception | None = None
+    schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
     for _ in range(retries):
         try:
+            _probe()
             with pool().connection() as conn:
-                conn.execute("SELECT 1")
-            break
-        except Exception as e:  # DB 還沒準備好
+                conn.execute(schema_sql)
+            seed_taxonomy()
+            return
+        except Exception as e:  # DB 還沒好 / 首次初始化重啟中 / 短暫斷線 / 密碼還沒套上
             last_err = e
             time.sleep(delay)
-    else:
-        raise RuntimeError(f"連不上 Postgres：{last_err}")
-
-    schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
-    with pool().connection() as conn:
-        conn.execute(schema_sql)
-    seed_taxonomy()
+    raise RuntimeError(f"連不上或初始化 Postgres 失敗（重試 {retries} 次）：{last_err}")
 
 
 # ── taxonomy ────────────────────────────────────────────────────────

@@ -236,11 +236,24 @@ log "建置並啟動容器（首次會拉映像、裝相依，請稍候）…"
 $DOCKER_SUDO $COMPOSE up -d --build
 
 # ── 6. 健康檢查 + 連線資訊（含兩組 token + 給 Claude 的 prompt）────────
-log "等服務起來…"
-for i in $(seq 1 30); do
-  if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
+log "等服務起來…（api 首次會等 DB 初始化，最多約兩分鐘）"
+HEALTHY=0
+for i in $(seq 1 75); do
+  if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then HEALTHY=1; break; fi
   sleep 2
 done
+
+if [ "$HEALTHY" -ne 1 ]; then
+  log "⚠ /health 仍沒回應——把 api 最近的 log 印出來找原因（常見：連不到 DB／密碼不符／首次初始化）："
+  $DOCKER_SUDO $COMPOSE logs --tail=40 api || true
+  echo
+  # 密碼不符的典型訊息：通常是 .env 重產但舊 pgdata volume 還在（密碼只在 volume 第一次建立時套用）。
+  if $DOCKER_SUDO $COMPOSE logs --tail=60 api 2>/dev/null | grep -qiE 'password authentication failed'; then
+    log "看起來是 DB 密碼不符：server/.env 的密碼與既有的 pgdata volume 對不上。"
+    echo "  若這台還沒有要保留的資料，清掉 volume 後重跑即可修好："
+    echo "    cd \"$DIR/server\" && $DOCKER_SUDO $COMPOSE down -v && bash bootstrap.sh"
+  fi
+fi
 
 echo
 # 連線資訊與兩組 token 統一由 show-info.sh 印出（之後想再查一次也跑這支）。

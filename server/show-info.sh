@@ -21,10 +21,10 @@ echo "=================================================================="
 if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
   echo "✅ PosePlanner 私有 DB 運作中（對外埠 ${PORT}）。"
 else
-  echo "⚠ /health 沒回應——容器可能還沒起來或沒在跑。看 log：docker compose logs -f api"
+  echo "⚠ /health 沒回應——api 容器可能還沒起來、卡在啟動、或連不到 DB。"
+  echo "   先看 log 找原因：  docker compose logs --tail=80 api"
 fi
-echo "  健康檢查 ：http://localhost:${PORT}/health"
-echo "  網頁上傳 ：http://${IP}:${PORT}/"
+echo "  健康檢查 ：http://${IP}:${PORT}/health   ← 後端是純 API，要看圖請開前端（:8080），這個網址只用來確認後端活著"
 echo
 echo "  base-url ：http://${IP}:${PORT}"
 echo "  讀寫 token（入庫用）        ：${TOKEN:-（未設＝純內網信任，不檢查）}"
