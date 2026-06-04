@@ -15,10 +15,11 @@ services:
   db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
-    # socket 放 /tmp（不放預設 /var/run/postgresql）：在 Proxmox 非特權 LXC 裡跑 Docker 時，
-    # uid mapping 會讓容器內 postgres 無法在 /var/run/postgresql 建 unix socket（Permission denied）。
-    # 改 /tmp 可繞開；一般主機也無害。api 走 TCP，不受影響。
-    command: ["-c", "unix_socket_directories=/tmp"]
+    # 完全停用 unix domain socket（空字串）：在 Proxmox 非特權 LXC 裡跑 Docker 時，
+    # AppArmor/seccomp 會擋掉 AF_UNIX 的 bind()，導致 postgres 在任何目錄都建不了 socket
+    # （/var/run/postgresql 跟 /tmp 都 Permission denied）。TCP 監聽不受影響，
+    # api 與 healthcheck 都走 TCP（PGHOST=db / 127.0.0.1），不需要 unix socket。一般主機也無害。
+    command: ["-c", "unix_socket_directories="]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-poseplanner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-poseplanner}
