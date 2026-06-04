@@ -81,6 +81,10 @@ build_web_in_container() {
     node:22-slim bash -lc '
       set -e
       mkdir -p /build && cp -a /src/. /build/ && cd /build
+      # 丟掉 host 帶來的 lockfile / node_modules：lockfile 多半是 macOS 產的、缺 linux
+      # optional 原生套件（@oxc-parser/binding-linux-*、esbuild 等），照它裝會觸發
+      # npm/cli#4828。刪掉後從 package.json 全新解析，linux 原生 binding 才會齊。
+      rm -rf node_modules package-lock.json npm-shrinkwrap.json
       npm install --ignore-scripts --no-audit --no-fund
       find node_modules -path "*@esbuild/*/bin/esbuild" -exec chmod +x {} +
       npm run build
