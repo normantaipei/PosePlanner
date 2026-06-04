@@ -108,7 +108,19 @@
       const ready = ref(false);            // 設定 OK，可以查
       const lightbox = reactive({ open: false, src: "", cap: "" });
       const sentinel = ref(null);
+      const expanded = reactive({});      // post.id -> 是否展開完整敘述
+      const overflowing = reactive({});   // post.id -> 敘述是否超過收束行數（才顯示「更多」）
       let debounceTimer = null;
+
+      // IG 風收束：敘述預設夾到 2 行，量測是否溢出來決定要不要給「更多」鈕。
+      // 量測要在收束狀態下做（展開後 clamp 移除就量不到），故展開時跳過。
+      function setCapRef(id, el) {
+        if (!el || expanded[id]) return;
+        requestAnimationFrame(() => {
+          if (!expanded[id]) overflowing[id] = el.scrollHeight - el.clientHeight > 2;
+        });
+      }
+      function toggleExpand(id) { expanded[id] = !expanded[id]; }
 
       const feedTitle = computed(() => {
         if (activeTag.value) return "標籤：" + activeTag.value.split("=").slice(1).join("=");
@@ -203,8 +215,8 @@
 
       return {
         q, posts, loading, done, capped, status, statusErr, lightbox, sentinel,
-        feedTitle, feedMeta, statsText, ready,
-        search, onTag, clearSearch, openLightbox, closeLightbox,
+        feedTitle, feedMeta, statsText, ready, expanded, overflowing,
+        search, onTag, clearSearch, openLightbox, closeLightbox, setCapRef, toggleExpand,
       };
     },
     template: `
@@ -248,7 +260,12 @@
             <div v-else class="media no-img"><span>（無縮圖）</span></div>
 
             <div class="post-body">
-              <p v-if="p.desc" class="caption">{{ p.desc }}</p>
+              <div v-if="p.desc" class="caption-wrap">
+                <p class="caption" :class="{ clamped: !expanded[p.id] }"
+                   :ref="(el) => setCapRef(p.id, el)">{{ p.desc }}</p>
+                <button v-if="overflowing[p.id]" type="button" class="more-link"
+                        @click="toggleExpand(p.id)">{{ expanded[p.id] ? '收起' : '… 更多' }}</button>
+              </div>
               <div class="chips">
                 <span v-for="c in p.roleChips" :key="c.role + c.name" class="chip role" :title="c.role">
                   {{ c.role }}：{{ c.name }}

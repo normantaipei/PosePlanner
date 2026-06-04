@@ -132,7 +132,18 @@ body {
 .media.no-img span { color: var(--ink-soft); font-size: 13px; }
 
 .post-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
-.caption { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); }
+/* IG 風敘述：預設夾 2 行，溢出時下方給灰色「… 更多」鈕展開 */
+.caption-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.caption { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); white-space: pre-line; word-break: break-word; }
+.caption.clamped {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.more-link {
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  color: var(--ink-soft); font-size: 13px; line-height: 1.4; font-weight: 600;
+}
+@media (hover: hover) { .more-link:hover { color: var(--ink); } }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   font-size: 13px; padding: 7px 12px; border-radius: 999px; line-height: 1;
