@@ -68,6 +68,28 @@ python3 scripts/backend.py status            # 確認連得到
 | GET | `/search?q=&tag=&limit=` | tag + 關鍵字粗篩候選（語意排序交給 Claude） | 讀取 |
 | GET | `/thumbs/{hash}.jpg` | 取縮圖 | 讀取 |
 | GET | `/images/{hash}.ext` | 取原圖 | 讀取 |
+| GET | `/skill` | 下載打包好的 skill zip（連線設定即時烤入） | **僅限區網** |
+
+### `/skill` — 區網內直接下載 skill
+
+不必手動 `scp` skill 檔。在**區網內**的另一台機器 / 手機開：
+
+```
+http://<這台機器內網IP>:8000/skill            # 讀寫版（自己入庫用，預設）
+http://<這台機器內網IP>:8000/skill?token=ro    # 唯讀版（只給人搜尋）
+http://<這台機器內網IP>:8000/skill?token=none  # 不烤 token（上傳後自己再設）
+```
+
+會即時把 `SKILL.md` / `scripts/` / `vendor/sqlite-vec/` 打包成 `poseplanner-skill.zip`，
+並把 `data/config.json` 烤成「指向這台 server」——下載解開即為**私有 DB 已連線**狀態，
+直接傳到 Claude Desktop → 設定 → Capabilities → Skills → 上傳即可。
+
+- **安全**：只放行**私有網段 / loopback / link-local** 的來源 IP（用真實 TCP 對端，
+  **不信任**可偽造的 `X-Forwarded-For`），公網來源一律 `403`。要放行 VPN 子網等額外網段，
+  設 `POSEPLANNER_SKILL_ALLOW_CIDRS=100.64.0.0/10,...`（compose 已預留環境變數）。
+- ⚠ **若你把 api 擺在反向代理（nginx 等）後面**：server 看到的對端會是代理的 IP（多半是
+  loopback/私有），等於對所有經代理的人開放——這種情境請改在**代理層**限制 `/skill` 的來源。
+- repo 由 compose 以 `../:/repo:ro` 唯讀掛進容器供即時打包；改了 `POSEPLANNER_REPO` 要對應調整。
 
 `/images` 的 multipart 欄位：`file`（圖）、`description`、`tags`（JSON 陣列
 `[{"category","name"},...]`）、選填 `source` / `rating` / `favorite` / `embedding` / `embedding_model`。

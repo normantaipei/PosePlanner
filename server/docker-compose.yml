@@ -52,9 +52,14 @@ services:
       POSEPLANNER_READ_TOKEN: ${POSEPLANNER_READ_TOKEN:-}
       POSEPLANNER_CORS_ORIGINS: ${POSEPLANNER_CORS_ORIGINS:-*}
       POSEPLANNER_DATA: /data
+      # /skill 下載端點：repo 在容器內的掛載點 + 額外放行的來源網段（選填，逗號分隔 CIDR）。
+      POSEPLANNER_REPO: /repo
+      POSEPLANNER_SKILL_ALLOW_CIDRS: ${POSEPLANNER_SKILL_ALLOW_CIDRS:-}
     volumes:
       - media:/data
-      # taxonomy.yaml 在 repo 根（server/ 之外）→ 唯讀掛進容器供 seed / 判定 active。
+      # repo 根唯讀掛進來：供 seed（taxonomy.yaml）與 /skill 即時打包（SKILL.md / scripts / vendor）。
+      - ../:/repo:ro
+      # taxonomy.yaml 維持掛在 /app 舊路徑（seed / 判定 active 用，相容既有設定）。
       - ../taxonomy.yaml:/app/taxonomy.yaml:ro
     ports:
       - "${API_PORT:-8000}:8000"

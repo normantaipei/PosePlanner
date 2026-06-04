@@ -17,6 +17,7 @@
   GET  /search?q=&tag=&limit=       tag + 關鍵字粗篩候選（語意排序交給 Claude）
   GET  /thumbs/{name}               取縮圖（讀取 token 即可，公開找圖頁用這個）
   GET  /images/{name}               取『原圖』——需讀寫 token（防整庫高清被搬走）
+  GET  /skill                       下載打包好的 skill zip（**僅限區網**，免 token；連線設定即時烤入）
 
 讀取端點（/stats /search /thumbs）需『讀取』token（讀寫或唯讀皆可）。
 原圖 /images 與所有寫入端點需『讀寫』token（環境變數 POSEPLANNER_TOKEN；
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import zipfile
@@ -34,7 +36,7 @@ from pathlib import Path
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -52,6 +54,17 @@ THUMB_MAX = 1280   # 縮圖長邊上限；放大檢視夠清楚，又不外洩�
 RW_TOKEN = os.environ.get("POSEPLANNER_TOKEN", "").strip()
 RO_TOKEN = os.environ.get("POSEPLANNER_READ_TOKEN", "").strip()
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"}
+
+# repo 根（含 SKILL.md / scripts / vendor），給 /skill 即時打包用。
+# 容器內由 compose 以 ../:/repo:ro 掛進來；本機跑時退回 app.py 上溯的 repo 根。
+REPO_DIR = Path(os.environ.get("POSEPLANNER_REPO", str(Path(__file__).resolve().parents[2])))
+# 跟 scripts/build_skill_zip.sh 同一份清單；改一邊要同步另一邊。
+SKILL_FILES = [
+    "SKILL.md", "taxonomy.yaml", "requirements.txt",
+    "scripts/backend.py", "scripts/add_pose.py", "scripts/fetch_post.py",
+    "scripts/search.py", "scripts/vecdb.py", "scripts/schema.sql", "scripts/probe_net.py",
+]
+SKILL_DIRS = ["vendor/sqlite-vec"]
 
 app = FastAPI(title="PosePlanner 私有 DB", version="1.0")
 
@@ -137,6 +150,42 @@ def require_read(authorization: str | None = Header(default=None), t: str | None
     raise HTTPException(status_code=401, detail="需要『讀取』token（讀寫或唯讀皆可）")
 
 
+# ── 區網限定（給 /skill 下載用）──────────────────────────────────────
+# 額外放行的來源網段（VPN 子網之類），逗號分隔 CIDR；預設只放私有網段 + loopback。
+_skill_extra_cidrs = []
+for _c in os.environ.get("POSEPLANNER_SKILL_ALLOW_CIDRS", "").split(","):
+    _c = _c.strip()
+    if _c:
+        try:
+            _skill_extra_cidrs.append(ipaddress.ip_network(_c, strict=False))
+        except ValueError:
+            pass
+
+
+def _peer_ip(request: Request):
+    """取真實 TCP 對端 IP（不信任可偽造的 X-Forwarded-For）。IPv4-mapped 還原成 IPv4。"""
+    host = request.client.host if request.client else None
+    if not host:
+        return None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return getattr(ip, "ipv4_mapped", None) or ip
+
+
+def require_lan(request: Request) -> None:
+    """只放行區網（私有網段 / loopback / link-local）+ 自訂 CIDR 的來源，其餘 403。"""
+    ip = _peer_ip(request)
+    if ip is None:
+        raise HTTPException(status_code=403, detail="無法判定來源位址")
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return
+    if any(ip in net for net in _skill_extra_cidrs):
+        return
+    raise HTTPException(status_code=403, detail="這個端點僅限區網內存取")
+
+
 # ── 縮圖 ────────────────────────────────────────────────────────────
 def make_thumbnail(img_bytes: bytes, dst: Path) -> bool:
     try:
@@ -155,6 +204,49 @@ def make_thumbnail(img_bytes: bytes, dst: Path) -> bool:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "service": "poseplanner-private-db"}
+
+
+@app.get("/skill")
+def download_skill(
+    request: Request,
+    token: str = "rw",                       # rw（讀寫，預設）/ ro（唯讀）/ none（不烤 token）
+    _: None = Depends(require_lan),          # ← 僅限區網
+) -> Response:
+    """即時打包並下載 skill zip（**限區網**）。
+
+    會把連線設定即時烤進 zip 裡的 `data/config.json`，下載解開即為「私有 DB 已連線」狀態：
+      base_url = 你存取本服務所用的網址（從這個請求推得）；token 由 ?token= 決定。
+    """
+    missing = [f for f in SKILL_FILES if not (REPO_DIR / f).is_file()]
+    missing += [d for d in SKILL_DIRS if not (REPO_DIR / d).is_dir()]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"server 端找不到 repo 檔（需把 repo 掛進 {REPO_DIR}）：{', '.join(missing)}",
+        )
+
+    tok = {"rw": RW_TOKEN, "ro": RO_TOKEN, "none": ""}.get(token)
+    if tok is None:
+        raise HTTPException(status_code=400, detail="token 只能是 rw / ro / none")
+    config = {
+        "backend": "selfhost",
+        "selfhost": {"base_url": str(request.base_url).rstrip("/"), "token": tok},
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("data/config.json", json.dumps(config, ensure_ascii=False, indent=2))
+        for rel in SKILL_FILES:
+            z.write(REPO_DIR / rel, rel)
+        for d in SKILL_DIRS:
+            for f in sorted((REPO_DIR / d).rglob("*")):
+                if f.is_file() and f.name != ".DS_Store":
+                    z.write(f, f.relative_to(REPO_DIR).as_posix())
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="poseplanner-skill.zip"'},
+    )
 
 
 @app.get("/stats")

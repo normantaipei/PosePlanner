@@ -29,6 +29,12 @@ echo
 echo "  base-url ：http://${IP}:${PORT}"
 echo "  讀寫 token（入庫用）        ：${TOKEN:-（未設＝純內網信任，不檢查）}"
 echo "  唯讀 token（只給人搜尋、不能改）：${READ_TOKEN:-（未設）}"
+echo "------------------------------------------------------------------"
+echo "  📦 下載 skill（限區網、免 token，連線設定已烤好）："
+echo "       讀寫版（自己入庫用）：http://${IP}:${PORT}/skill"
+echo "       唯讀版（只給人搜尋）：http://${IP}:${PORT}/skill?token=ro"
+echo "     區網內另一台機器/手機開這網址就會下載 poseplanner-skill.zip，傳到"
+echo "     Claude Desktop → 設定 → Capabilities → Skills → 上傳即可（已連好這台後端）。"
 echo "=================================================================="
 echo
 echo "📋 把下面這段貼給 Claude（每個新對話開頭貼一次，它就記得怎麼連你的私有 DB）："
