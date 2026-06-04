@@ -24,8 +24,9 @@ DEFAULT_CREATOR_ROLE = "creator"
 _pool: ConnectionPool | None = None
 
 
-def dsn() -> str:
-    """從環境變數組 Postgres DSN。docker-compose 會帶這些進來。"""
+def dsn(dbname: str | None = None) -> str:
+    """從環境變數組 Postgres DSN。docker-compose 會帶這些進來。
+    dbname 可覆寫目標資料庫（補建 DB 時要連到一定存在的維護 DB postgres）。"""
     url = os.environ.get("DATABASE_URL")
     if url:
         return url
@@ -33,7 +34,7 @@ def dsn() -> str:
     port = os.environ.get("PGPORT", "5432")
     user = os.environ.get("POSTGRES_USER", "poseplanner")
     pwd = os.environ.get("POSTGRES_PASSWORD", "poseplanner")
-    name = os.environ.get("POSTGRES_DB", "poseplanner")
+    name = dbname or os.environ.get("POSTGRES_DB", "poseplanner")
     return f"postgresql://{user}:{pwd}@{host}:{port}/{name}"
 
 
@@ -42,6 +43,27 @@ def pool() -> ConnectionPool:
     if _pool is None:
         _pool = ConnectionPool(dsn(), min_size=1, max_size=10, kwargs={"autocommit": True})
     return _pool
+
+
+def _ensure_database(connect_timeout: int = 3) -> None:
+    """目標資料庫不存在就補建，讓系統自我修復。
+
+    POSTGRES_DB 只在 volume「第一次初始化（空目錄）」時才會被建立；若 volume 是舊的
+    或半初始化的（cluster + 使用者都在，但這個 DB 沒被建到），api 會一直噴
+    `database "..." does not exist`。這裡用一定存在的維護 DB postgres 連進去，沒有就
+    CREATE DATABASE 補上。POSTGRES_USER 在官方映像是超級使用者，足以建庫。
+    DATABASE_URL 模式（多半是受管 PG）不處理，交給該服務自己管理。
+    """
+    if os.environ.get("DATABASE_URL"):
+        return
+    name = os.environ.get("POSTGRES_DB", "poseplanner")
+    with psycopg.connect(dsn("postgres"), connect_timeout=connect_timeout, autocommit=True) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s", (name,)
+        ).fetchone()
+        if not exists:
+            # 識別字不能用參數化綁定，name 取自我們自己的環境變數，非外部輸入。
+            conn.execute(f'CREATE DATABASE "{name}"')
 
 
 def _probe(connect_timeout: int = 3) -> None:
@@ -69,6 +91,7 @@ def wait_and_init(retries: int = 60, delay: float = 2.0) -> None:
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
     for _ in range(retries):
         try:
+            _ensure_database()  # 半初始化的舊 volume 可能缺這個 DB → 自己補建
             _probe()
             with pool().connection() as conn:
                 conn.execute(schema_sql)
