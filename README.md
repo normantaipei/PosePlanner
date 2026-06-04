@@ -170,11 +170,20 @@ Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可�
 搜尋框打字即時找）。前端走 **SSR + server proxy**：**讀取** token 只存在 server 端環境
 變數，不會出現在瀏覽器，瀏覽器也不直接連你的私有 DB server。
 
+本機開發：
+
 ```bash
 cd web
 cp .env.example .env     # 填 NUXT_POSEPLANNER_BASE_URL 與（可選）NUXT_POSEPLANNER_TOKEN
 npm install
 npm run dev              # → http://localhost:3000
+```
+
+空白 Linux VM **一鍵部署**（裝 Docker → build → 起容器，token 以環境變數帶入不外洩）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/web/bootstrap.sh \
+  | bash -s -- http://192.168.1.50:8000 <read_token>
 ```
 
 細節見 [web/README.md](web/README.md)。
@@ -254,6 +263,8 @@ poseplanner/
 │   ├── api/                # FastAPI：/images /fragments /search …
 │   └── db/schema.sql       # Postgres 結構
 ├── web/                  # 找圖前端（Nuxt 3，SSR + server proxy，社群媒體風格搜尋頁）
+│   ├── bootstrap.sh        # 一鍵部署：裝 Docker → build → 起容器（token 走環境變數）
+│   ├── Dockerfile          # 多階段建構：精簡 Node runtime 映像
 │   ├── server/api/         # 後端代理：/api/search /api/stats /api/media（token 只在這層）
 │   ├── pages/ components/   # 主頁 + TopBar / PostCard / AppDrawer / DevModal / LightBox
 │   └── composables/ utils/  # useFeed（搜尋/分頁）、pose（資料整理純函式）

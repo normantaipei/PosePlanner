@@ -32,14 +32,38 @@ npm run dev              # http://localhost:3000
 
 ## 上線
 
-需要 Node runtime（SSR / 代理）：
+### 🚀 一鍵部署（空白 Linux VM）
+
+在全新的 Linux 機器上,一行接上後端就上線(缺什麼裝什麼,可重複執行):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/web/bootstrap.sh \
+  | bash -s -- http://192.168.1.50:8000 <read_token>
+```
+
+[bootstrap.sh](bootstrap.sh) 會:裝 Docker/git → clone repo → `docker build` 前端映像 →
+起容器(後端 domain + token 以**環境變數**帶入,不烤進映像、不外洩給瀏覽器;
+`--restart unless-stopped` 開機自動起;埠被占用自動往上避讓)→ 印出網址。
+
+> 換後端 / 換 token:重跑這支腳本帶新參數即可(會重建映像、重啟容器)。
+
+### 手動(Docker)
+
+```bash
+docker build -t poseplanner-web .
+docker run -d --name poseplanner-web --restart unless-stopped -p 8080:3000 \
+  -e NUXT_POSEPLANNER_BASE_URL=http://192.168.x.x:8000 \
+  -e NUXT_POSEPLANNER_TOKEN=<read_token> \
+  poseplanner-web
+```
+
+### 手動(裸 Node)
 
 ```bash
 npm run build
-node .output/server/index.mjs     # 或：npm start
-# 同樣用環境變數提供連線資訊：
-#   NUXT_POSEPLANNER_BASE_URL=http://192.168.x.x:8000 NUXT_POSEPLANNER_TOKEN=... node .output/server/index.mjs
+NUXT_POSEPLANNER_BASE_URL=http://192.168.x.x:8000 NUXT_POSEPLANNER_TOKEN=... \
+  node .output/server/index.mjs        # 或：npm start
 ```
 
-> 純靜態（`npm run generate`）會失去 server 代理 → token 就藏不住、圖片也代理不了。
-> 這個前端刻意走 SSR；要靜態託管請改回「token 放前端」的設計。
+> 純靜態(`npm run generate`)會失去 server 代理 → token 就藏不住、圖片也代理不了。
+> 這個前端刻意走 SSR;要靜態託管請改回「token 放前端」的設計。
