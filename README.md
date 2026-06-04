@@ -28,6 +28,19 @@
 
 ---
 
+## 🏗️ 系統架構
+
+「入庫」與「搜尋」分離，並支援兩種儲存後端（純雲端 Drive / 自架私有 DB），首次使用時二選一。
+
+![PosePlanner 系統架構圖](docs/architecture.png)
+
+> 圖的原始檔在 [docs/architecture.mmd](docs/architecture.mmd)（Mermaid）。修改後重繪：
+> ```bash
+> mmdc -i docs/architecture.mmd -o docs/architecture.png -b white -w 2400
+> ```
+
+---
+
 ## 🚀 安裝
 
 PosePlanner 是一個 **Agent Skill**。Claude Desktop 與 Claude Code 的安裝方式不同 ——

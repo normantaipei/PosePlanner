@@ -1,0 +1,42 @@
+flowchart TB
+    subgraph ingest["📥 入庫端（Claude 沙箱 · 手機/Desktop）"]
+        src["cos 圖 / 資料夾<br/>或 IG · X · FB 貼文網址"]
+        skill["poseplanner skill<br/>Claude 看圖 → 動作敘述 + 結構化標籤"]
+        tax[("taxonomy.yaml<br/>標籤約束")]
+        src --> skill
+        tax -. 約束 .-> skill
+    end
+
+    cfg{{"data/config.json<br/>backend = drive / selfhost<br/>（首次選一種）"}}
+    skill --> cfg
+
+    subgraph driveMode["🅐 drive 模式（純雲端，零維運）"]
+        pack["pack → 小 fragment (zip)<br/>只上傳不下載"]
+        gdrive[("Google Drive<br/>PosePlanner/fragments/<br/>append-only 收件匣")]
+        compact["搜尋時：下載 fragments<br/>→ compact 成臨時 library.db<br/>→ 查完即丟"]
+        pack --> gdrive
+        gdrive --> compact
+    end
+
+    subgraph selfhost["🅑 selfhost 模式（自架私有 DB，原圖留本機）"]
+        direction TB
+        api["FastAPI server (api/app.py)<br/>/images /fragments /search<br/>/stats /thumbs /images 取原圖<br/>讀寫 + 唯讀 雙 token"]
+        pg[("PostgreSQL + pgvector<br/>pgdata volume")]
+        media[("media volume<br/>原圖 + 縮圖")]
+        api <--> pg
+        api <--> media
+    end
+
+    cfg -- drive --> pack
+    cfg -- selfhost --> api
+
+    subgraph webapp["🌐 找圖前端（Nuxt 3 · SSR）"]
+        browser["瀏覽器 index.vue<br/>useFeed"]
+        proxy["Nuxt server proxy<br/>/api/search /api/stats /api/media<br/>token 只在 server 端補上"]
+        browser --> proxy
+    end
+
+    proxy -->|"帶讀取 token"| api
+
+    vendor[("vendor/sqlite-vec<br/>vec0 向量引擎")]
+    vendor -. loadable ext .-> compact
