@@ -257,6 +257,14 @@ body {
 @media (hover: hover) { .modal-x:hover { background: var(--chip); color: var(--ink); } }
 .dev-line { margin: 8px 0; font-size: 14px; line-height: 1.6; color: var(--ink); }
 .dev-line b { color: var(--ink-soft); font-weight: 700; margin-right: 4px; }
+.dev-inline-link { color: var(--ink); font-weight: 700; text-decoration: underline;
+  text-underline-offset: 2px; }
+@media (hover: hover) { .dev-inline-link:hover { color: var(--ink-soft); } }
+.dev-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.dev-link { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px;
+  background: var(--chip); color: var(--ink); font-size: 13px; font-weight: 600;
+  text-decoration: none; border: 1px solid var(--line); transition: background .15s, color .15s; }
+@media (hover: hover) { .dev-link:hover { background: var(--ink); color: var(--bg); } }
 .dev-foot { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
   font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
 
