@@ -109,6 +109,35 @@ install_compose_binary() {
   $SUDO chmod +x "$dir/docker-compose" || return 1
 }
 
+# buildx 是否夠新（compose v2 build 需要 >= 0.17.0）
+buildx_ok() {
+  local v
+  v="$(docker buildx version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  [ -n "$v" ] || return 1
+  [ "$(printf '%s\n0.17.0\n' "$v" | sort -V | head -1)" = "0.17.0" ]
+}
+
+# 抓 Docker 官方 buildx binary 放進 cli-plugins（零依賴）。docker.io 附的 buildx 常太舊。
+install_buildx_binary() {
+  command -v curl >/dev/null 2>&1 || $SUDO apt-get install -y curl ca-certificates || return 1
+  local m arch ver dir
+  m="$(uname -m)"
+  case "$m" in
+    x86_64|amd64)  arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    armv7l)        arch="arm-v7" ;;
+    *)             arch="amd64" ;;
+  esac
+  ver="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest \
+    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+  [ -n "$ver" ] || return 1
+  dir="/usr/local/lib/docker/cli-plugins"
+  $SUDO install -m 0755 -d "$dir" || return 1
+  $SUDO curl -fsSL "https://github.com/docker/buildx/releases/download/${ver}/buildx-${ver}.linux-${arch}" \
+    -o "$dir/docker-buildx" || return 1
+  $SUDO chmod +x "$dir/docker-buildx" || return 1
+}
+
 # compose：優先 docker compose（外掛），退而 docker-compose
 if docker compose version >/dev/null 2>&1; then
   COMPOSE="docker compose"
@@ -139,6 +168,16 @@ fi
 # 非 root 又還沒進 docker 群組時，這支腳本內仍用 sudo 跑 docker
 DOCKER_SUDO=""
 if [ -n "$SUDO" ] && ! docker info >/dev/null 2>&1; then DOCKER_SUDO="$SUDO"; fi
+
+# compose v2 的 build 需要新版 buildx；docker.io 附的常太舊，不夠新就抓官方 binary 補上
+if [ "$COMPOSE" = "docker compose" ] && ! buildx_ok; then
+  log "buildx 太舊或缺少，安裝 Docker 官方 buildx binary…"
+  if install_buildx_binary && buildx_ok; then
+    log "buildx 已更新到 $(docker buildx version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)。"
+  else
+    log "⚠ buildx 自動安裝失敗；若 build 失敗請手動更新 buildx（https://github.com/docker/buildx/releases）後重跑。"
+  fi
+fi
 
 # ── 2. 取得程式碼 ───────────────────────────────────────────────────
 if ! command -v git >/dev/null 2>&1; then
