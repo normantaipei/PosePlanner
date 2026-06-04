@@ -1,4 +1,4 @@
-/* PosePlanner 找圖前端 — 社群媒體風格（FB/IG 感）。零框架、純 CSS。
+/* PosePlanner 找圖前端 — 社群媒體風格（FB/IG 感）。純 CSS。
    手機優先（mobile-first）：預設樣式給手機，往上用 min-width 加大。
    feed 用 CSS multi-column 瀑布流，任何比例的照片都「完整不裁切」呈現。 */
 :root {

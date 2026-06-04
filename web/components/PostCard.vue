@@ -1,0 +1,77 @@
+<script setup lang="ts">
+// 單張卡片：頭像/作者、縮圖、IG 風收束敘述（超過 2 行才給「更多」）、角色與標籤 chips。
+import type { PostView } from '~/utils/pose'
+
+const props = defineProps<{ post: PostView }>()
+const emit = defineEmits<{
+  openLightbox: [post: PostView]
+  tag: [raw: string]
+}>()
+
+const expanded = ref(false)
+const overflowing = ref(false)
+const capEl = ref<HTMLElement | null>(null)
+
+// 量測敘述在收束狀態下是否溢出，決定要不要顯示「更多」。
+// 量測要在收束時做（展開後 clamp 移除就量不到），故展開時跳過。
+function measure() {
+  const el = capEl.value
+  if (!el || expanded.value) return
+  requestAnimationFrame(() => {
+    if (!expanded.value && capEl.value) {
+      overflowing.value = capEl.value.scrollHeight - capEl.value.clientHeight > 2
+    }
+  })
+}
+onMounted(measure)
+</script>
+
+<template>
+  <article class="post">
+    <div class="post-head">
+      <div class="avatar">{{ post.avatar }}</div>
+      <div class="who">
+        <div class="author">{{ post.author }}</div>
+        <div class="sub">{{ post.sub }}</div>
+      </div>
+      <div v-if="post.badge" class="head-badge">{{ post.badge }}</div>
+    </div>
+
+    <div v-if="post.thumb" class="media" @click="emit('openLightbox', post)">
+      <img loading="lazy" :src="post.thumb" :alt="'pose #' + post.id" />
+    </div>
+    <div v-else class="media no-img"><span>（無縮圖）</span></div>
+
+    <div class="post-body">
+      <div v-if="post.desc" class="caption-wrap">
+        <p ref="capEl" class="caption" :class="{ clamped: !expanded }">{{ post.desc }}</p>
+        <button
+          v-if="overflowing"
+          type="button"
+          class="more-link"
+          @click="expanded = !expanded"
+        >
+          {{ expanded ? '收起' : '… 更多' }}
+        </button>
+      </div>
+      <div class="chips">
+        <span
+          v-for="c in post.roleChips"
+          :key="c.role + c.name"
+          class="chip role"
+          :title="c.role"
+        >
+          {{ c.role }}：{{ c.name }}
+        </span>
+        <button
+          v-for="t in post.tagChips"
+          :key="t.raw"
+          class="chip"
+          @click="emit('tag', t.raw)"
+        >
+          #{{ t.val }}
+        </button>
+      </div>
+    </div>
+  </article>
+</template>

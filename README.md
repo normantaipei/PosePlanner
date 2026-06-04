@@ -166,12 +166,15 @@ Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可�
 
 #### 🔎（選配）找圖前端：社群媒體風格的搜尋頁
 
-私有 DB 模式下，可另外架一個**純靜態的 Vue 搜尋頁**給人用瀏覽器找圖（進頁先給推薦、
-搜尋框打字即時找）。一鍵建構，會問你 server domain 與**讀取** token：
+私有 DB 模式下，可另外架一個 **Nuxt 3 搜尋頁**給人用瀏覽器找圖（進頁先給推薦、
+搜尋框打字即時找）。前端走 **SSR + server proxy**：**讀取** token 只存在 server 端環境
+變數，不會出現在瀏覽器，瀏覽器也不直接連你的私有 DB server。
 
 ```bash
-python3 web/build.py --serve --port 8080
-#   → 瀏覽器開 http://localhost:8080/
+cd web
+cp .env.example .env     # 填 NUXT_POSEPLANNER_BASE_URL 與（可選）NUXT_POSEPLANNER_TOKEN
+npm install
+npm run dev              # → http://localhost:3000
 ```
 
 細節見 [web/README.md](web/README.md)。
@@ -250,10 +253,10 @@ poseplanner/
 │   ├── docker-compose.yml  # PostgreSQL（pgvector）+ 圖片接收服務
 │   ├── api/                # FastAPI：/images /fragments /search …
 │   └── db/schema.sql       # Postgres 結構
-├── web/                  # 找圖前端（Vue 3，純靜態、社群媒體風格的搜尋頁）
-│   ├── build.py            # 一鍵建構：問 domain + 讀取 token → 產 config.js（可 --serve）
-│   ├── index.html / app.js / style.css
-│   └── vendor/             # build.py vendored 的 Vue（不進版控）
+├── web/                  # 找圖前端（Nuxt 3，SSR + server proxy，社群媒體風格搜尋頁）
+│   ├── server/api/         # 後端代理：/api/search /api/stats /api/media（token 只在這層）
+│   ├── pages/ components/   # 主頁 + TopBar / PostCard / AppDrawer / DevModal / LightBox
+│   └── composables/ utils/  # useFeed（搜尋/分頁）、pose（資料整理純函式）
 └── data/
     ├── library.db        # SQLite + sqlite-vec（drive 模式臨時庫，可攜帶、可分享）
     ├── config.json       # 選的後端（不進版控，含 selfhost token）
