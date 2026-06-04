@@ -67,6 +67,37 @@ find_free_port() {  # 從 $1 起往上找第一個沒被占用的埠
   echo "$start"  # 找不到就回原值，讓 docker 自己報錯
 }
 
+# 在受限環境（如 Proxmox 非特權 LXC）下，docker-default 的 AppArmor profile 會擋掉
+# esbuild service 行程的 socket（nuxt build 報 read ENOTCONN），而 docker build 不吃
+# --security-opt。改在吃得下該參數的 docker run 容器內編譯（apparmor=unconfined），
+# 把 .output 倒進暫存目錄，再用極簡 Dockerfile 組 runtime 映像（runtime 不需要 esbuild）。
+build_web_in_container() {
+  local stage; stage="$(mktemp -d)"
+  log "改用『容器內編譯 + apparmor=unconfined』避開 AppArmor 對 esbuild 的限制…"
+  $DOCKER_SUDO docker run --rm \
+    --security-opt apparmor=unconfined \
+    -v "$DIR/web":/src:ro \
+    -v "$stage":/out \
+    node:22-slim bash -lc '
+      set -e
+      mkdir -p /build && cp -a /src/. /build/ && cd /build
+      npm install --ignore-scripts --no-audit --no-fund
+      find node_modules -path "*@esbuild/*/bin/esbuild" -exec chmod +x {} +
+      npm run build
+      cp -a /build/.output /out/.output
+    ' || { rm -rf "$stage" 2>/dev/null || $SUDO rm -rf "$stage"; die "容器內編譯前端失敗。"; }
+  cat > "$stage/Dockerfile" <<'DOCKERFILE'
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=3000 PORT=3000
+COPY .output ./.output
+EXPOSE 3000
+CMD ["node", ".output/server/index.mjs"]
+DOCKERFILE
+  $DOCKER_SUDO docker build -t "$IMAGE" "$stage"
+  rm -rf "$stage" 2>/dev/null || $SUDO rm -rf "$stage" 2>/dev/null || true
+}
+
 # ── 0. 檢查必填的後端 domain ─────────────────────────────────────────
 if [ -z "$BASE_URL" ]; then
   die "沒帶後端 domain。用法：curl -fsSL …/web/bootstrap.sh | bash -s -- http://<後端IP>:<埠> <read_token>"
@@ -98,8 +129,13 @@ fi
 cd "$DIR/web"
 
 # ── 3. 建構前端映像 ─────────────────────────────────────────────────
+# 先試正常的多階段 docker build（一般主機走這條、有 layer cache）；若失敗（多半是
+# Proxmox 非特權 LXC 的 AppArmor 擋 esbuild service），自動退到容器內編譯的 fallback。
 log "docker build 前端映像（首次會拉 node 映像 + npm ci，請稍候）…"
-$DOCKER_SUDO docker build -t "$IMAGE" .
+if ! $DOCKER_SUDO docker build -t "$IMAGE" .; then
+  log "docker build 失敗，啟用 fallback…"
+  build_web_in_container
+fi
 
 # ── 4. 決定對外埠（自動避讓）─────────────────────────────────────────
 log "收掉本專案舊前端容器以釋放埠…"
