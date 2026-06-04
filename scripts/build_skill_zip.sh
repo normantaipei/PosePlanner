@@ -36,23 +36,53 @@ fi
 
 # 只放 skill 執行需要的檔；SKILL.md 必須在 zip 根目錄。
 # vendor/sqlite-vec/ 是向量引擎的二進位（含 mac/linux），雲端沙箱要靠它載入 sqlite-vec。
-zip -r "$OUT" \
-  ${BAKED_CONFIG:+$BAKED_CONFIG} \
-  SKILL.md \
-  taxonomy.yaml \
-  requirements.txt \
-  scripts/backend.py \
-  scripts/add_pose.py \
-  scripts/fetch_post.py \
-  scripts/search.py \
-  scripts/vecdb.py \
-  scripts/schema.sql \
-  scripts/probe_net.py \
-  vendor/sqlite-vec/ \
-  -x '*.DS_Store' >/dev/null
+# 用 Python 的 zipfile 打包，不依賴外部 zip/unzip 指令（乾淨 VM/Docker 預設常沒裝）。
+BAKED_CONFIG="$BAKED_CONFIG" OUT="$OUT" python3 - <<'PY'
+import os, zipfile, pathlib, sys
+
+out = os.environ["OUT"]
+items = [
+    "SKILL.md",
+    "taxonomy.yaml",
+    "requirements.txt",
+    "scripts/backend.py",
+    "scripts/add_pose.py",
+    "scripts/fetch_post.py",
+    "scripts/search.py",
+    "scripts/vecdb.py",
+    "scripts/schema.sql",
+    "scripts/probe_net.py",
+    "vendor/sqlite-vec/",
+]
+baked = os.environ.get("BAKED_CONFIG", "")
+if baked:
+    items.insert(0, baked)
+
+def files_for(item):
+    p = pathlib.Path(item)
+    if p.is_dir():
+        for f in sorted(p.rglob("*")):
+            if f.is_file() and f.name != ".DS_Store":
+                yield f
+    elif p.is_file():
+        if p.name != ".DS_Store":
+            yield p
+    else:
+        sys.exit(f"✗ 找不到要打包的項目：{item}")
+
+names = []
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for item in items:
+        for f in files_for(item):
+            z.write(f, f.as_posix())
+            names.append(f.as_posix())
+
+pathlib.Path(out + ".names").write_text("\n".join(names), encoding="utf-8")
+PY
 
 echo "✅ 打包完成：${OUT#$ROOT/}"
 echo "   內容："
-unzip -l "$OUT" | awk 'NR>3 && $4!="" {print "     "$4}'
+sed 's/^/     /' "$OUT.names"
+rm -f "$OUT.names"
 echo
 echo "下一步：Claude Desktop → 設定 → Capabilities/能力 → Skills → 上傳這個 zip"
