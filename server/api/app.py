@@ -7,7 +7,6 @@
 端點
 ────
   GET  /health                      健康檢查（免 token）
-  GET  /                            極簡網頁上傳表單（瀏覽器手動丟圖用）
   GET  /stats                       庫狀態（poses / tags 數）
   POST /images     (multipart)      收「一張原圖 + metadata」直接入庫（去重、產縮圖）
   POST /fragments  (multipart)      收一個 pack 出來的 fragment zip，回放併庫（相容雲端格式）
@@ -33,8 +32,9 @@ import zipfile
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -91,6 +91,16 @@ def _ratelimit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse
 
 
 app.add_exception_handler(RateLimitExceeded, _ratelimit_handler)
+
+
+# ── 不合法請求一律回 400 ────────────────────────────────────────────
+# FastAPI 預設對缺欄位／型別錯誤回 422；統一改成 400「不合法的請求」，
+# 不回傳 pydantic 的詳細欄位結構（避免把內部 schema 形狀洩漏給呼叫端）。
+def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": "不合法的請求"})
+
+
+app.add_exception_handler(RequestValidationError, _validation_handler)
 
 
 @app.on_event("startup")
@@ -509,25 +519,3 @@ def get_image(name: str, _: None = Depends(require_write)):
     return FileResponse(path)
 
 
-@app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    """極簡上傳頁：瀏覽器手動丟一張圖測試 /images（標籤用 JSON 陣列）。"""
-    return """<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
-<title>PosePlanner 私有 DB</title>
-<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px}
-label{display:block;margin:12px 0 4px}input,textarea{width:100%;padding:6px;box-sizing:border-box}
-button{margin-top:16px;padding:8px 20px}</style></head><body>
-<h1>PosePlanner 私有 DB — 圖片入庫</h1>
-<p>手動上傳一張 cos 圖測試接收服務。正式入庫請走 Claude skill（backend.py）。</p>
-<form action="/images" method="post" enctype="multipart/form-data">
-  <label>圖片</label><input type="file" name="file" accept="image/*" required>
-  <label>動作敘述 description</label><textarea name="description" rows="3" required></textarea>
-  <label>標籤 tags（JSON 陣列）</label>
-  <textarea name="tags" rows="3" required>[{"category":"people_count","name":"單人"},{"category":"framing","name":"全身"}]</textarea>
-  <label>創作者 creators（JSON 陣列，選填）</label>
-  <textarea name="creators" rows="2">[{"name":"模特兒名","role":"model"},{"name":"攝影師名","role":"photographer"}]</textarea>
-  <label>來源 source（選填）</label><input name="source">
-  <label>Bearer token（若 server 有設）</label><input name="_token_hint" disabled
-    placeholder="網頁表單不帶 token；有設 token 時請用 backend.py 上傳">
-  <button type="submit">上傳入庫</button>
-</form></body></html>"""
