@@ -87,10 +87,43 @@ ln -s "$(pwd)" ~/.claude/skills/poseplanner   # 軟連結，git pull 即更新
 ### C. 後端服務：私有 DB（自架，選 selfhost 才需要）
 
 > 只有要用**私有 DB 後端**（庫存在你自己網域內的機器）才需要這步；
-> 用 Google Drive 模式可**完全跳過**。後端通常架在另一台機器（家用 NAS / 工作室主機 / 雲端 VM），
-> 跟你跑 skill 的電腦分開。
+> 用 Google Drive 模式可**完全跳過**。
+> 大多數人用下面的〔🚀 一鍵全部〕即可；想把後端、前端拆到不同機器再看〔🧰 進階〕。
 
-#### 🚀 一鍵架設（全新空 VM）
+#### 🚀 一鍵全部（官方建議）：後端 ＋ 前端 ＋ skill
+
+最省事的做法——在一台**乾淨的機器**（或你自己的電腦）上貼這一行，三個服務一次到位。
+它會自己 clone 專案、裝 Docker、起後端，並**自動把 domain 與 token 串好**，
+你完全不用手動複製貼上 token 或改 domain：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/normantaipei/PosePlanner/main/bootstrap.sh | bash
+```
+
+它會依序：
+
+1. clone 專案 → 起**後端**（PostgreSQL + 圖片接收服務），亂數產生密碼與兩組 token。
+2. 把 domain ＋**唯讀** token 帶進**前端**找圖頁容器（token 只留在 server 端、不外洩給瀏覽器）。
+3. 把 domain ＋**讀寫** token 烤進 **skill** 的 `dist/poseplanner-skill.zip`（上傳即連線、免再設定）。
+4. 最後印出**前端網址**與 **skill 安裝步驟**，照著做就能開始用。
+
+> 🔌 **埠自動避讓 + 資料保留**：後端預設 8000、前端 8080，被占用會自動往上換；重跑這支腳本
+> 會**自動重新串好 domain/token**，且既有資料（DB、圖片）保留。
+>
+> 可用環境變數客製：`BASE_URL`（後端 domain，預設自動偵測本機區網 IP）、`API_PORT`、
+> `WEB_PORT`、`POSEPLANNER_DIR`（安裝目錄）。例：`curl -fsSL …/bootstrap.sh | BASE_URL=http://192.168.1.50:8000 bash`。
+>
+> 跑完你會拿到：① 一個可分享的**前端找圖網址**（唯讀，搬不走原圖）；② 一個已連線的
+> **skill zip**——到 Claude Desktop → 設定 → Capabilities → Skills → Upload 上傳它即可開始入庫。
+
+需要把後端、前端架在不同機器，或只架其中一個？見下方〔🧰 進階：前後端分開建立〕。
+
+#### 🧰 進階：前後端分開建立
+
+後端通常架在另一台機器（家用 NAS / 工作室主機 / 雲端 VM），跟你跑 skill / 開前端的電腦分開。
+這時可以分開架設、各自管理——下面是後端、前端各自的獨立部署方式。
+
+##### 只架後端（全新空 VM）
 
 在一台**乾淨的 Ubuntu / Debian VM** 上，用 root 或有 sudo 的帳號直接貼這一行——
 Docker、git、密鑰、容器全自動搞定：
@@ -109,7 +142,7 @@ Claude 端要貼的 `base-url` 與 `token`。跑完照著那段 `backend.py set 
 > 可用環境變數客製：`POSEPLANNER_DIR`（安裝目錄）、`API_PORT`（起始埠，預設 8000；一樣會自動避讓）。
 > 例：`curl -fsSL …/bootstrap.sh | API_PORT=9000 bash`。
 
-#### 🔧 手動架設（已有 Docker）
+##### 🔧 手動架設後端（已有 Docker）
 
 ```bash
 git clone https://github.com/normantaipei/PosePlanner.git && cd PosePlanner/server
@@ -121,7 +154,7 @@ bash show-info.sh             # 印出 base-url + 兩組 token + 給 Claude 的�
 
 > `bash show-info.sh` 任何時候都能再印一次連線資訊與兩組 token（一鍵 `bootstrap.sh` 跑完也會自動印）。
 
-#### 兩組 token：讀寫 / 唯讀
+##### 兩組 token：讀寫 / 唯讀
 
 後端有兩種權限的 token（bootstrap 會各自亂數產生、印出來）：
 
@@ -133,7 +166,7 @@ bash show-info.sh             # 印出 base-url + 兩組 token + 給 Claude 的�
 > 自己每天餵圖用**讀寫** token；想把庫開放給別人「只查不改」就給**唯讀** token。
 > 兩個都留空 = 純內網信任模式（完全不檢查）。
 
-#### 接上 Claude 端
+##### 接上 Claude 端
 
 在裝了 skill 的機器上（把 IP / token 換成上面印出來的；入庫端用讀寫 token）：
 
@@ -143,7 +176,7 @@ python3 scripts/backend.py set --backend selfhost \
 python3 scripts/backend.py status     # 確認連得到
 ```
 
-#### 📋 給 Claude 的初始化 prompt（讓它記得怎麼連後端）
+##### 📋 給 Claude 的初始化 prompt（讓它記得怎麼連後端）
 
 桌面版 / 手機版的雲端沙箱每次對話會重置，設定不一定留得住，所以**每個新對話開頭把這段貼給
 Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可）：
@@ -164,7 +197,7 @@ Claude**（bootstrap 跑完也會印出填好值的版本，直接複製即可�
 
 細節（API、備份、還原）見 [server/README.md](server/README.md)。
 
-#### 🔎（選配）找圖前端：社群媒體風格的搜尋頁
+##### 🔎 只架前端：找圖頁（社群媒體風格搜尋）
 
 私有 DB 模式下，可另外架一個 **Nuxt 3 搜尋頁**給人用瀏覽器找圖（進頁先給推薦、
 搜尋框打字即時找）。前端走 **SSR + server proxy**：**讀取** token 只存在 server 端環境
@@ -246,6 +279,7 @@ python3 scripts/add_pose.py ingest --manifest 今天的圖/_ingest.json
 
 ```
 poseplanner/
+├── bootstrap.sh          # 一鍵全部（官方建議）：後端 + 前端 + skill，自動串好 domain/token
 ├── SKILL.md              # 指示 Claude：看圖 → 依 taxonomy 產出 JSON
 ├── taxonomy.yaml         # 標籤維度的初始種子（非封閉，可成長）
 ├── scripts/
