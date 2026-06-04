@@ -50,7 +50,6 @@ body {
 @media (hover: hover) { .hamburger:hover { background: var(--chip); } }
 
 .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--brand-ink); flex: none; }
-.logo { font-size: 24px; }
 .brand-name { font-weight: 800; font-size: 19px; letter-spacing: .2px; }
 
 .searchbar {
@@ -60,7 +59,6 @@ body {
   transition: border-color .15s, box-shadow .15s;
 }
 .searchbar:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(91,108,255,.15); background: #fff; }
-.search-ic { color: var(--ink-soft); }
 .searchbar input {
   flex: 1; border: 0; outline: 0; background: transparent;
   font-size: 16px;       /* ≥16px 才不會讓 iOS Safari 自動放大頁面 */
@@ -80,8 +78,7 @@ body {
 
 .stats-pill { color: var(--ink-soft); font-size: 13px; white-space: nowrap; display: none; }
 
-/* 手機把品牌名藏起來只留 logo；空間夠才顯示文字＋統計 */
-@media (min-width: 560px) { .brand-name { display: inline; } }
+/* 空間夠才顯示庫狀態統計 */
 @media (min-width: 720px) {
   .bar-inner { padding: 10px 16px; gap: 14px; }
   .stats-pill { display: block; }
@@ -234,7 +231,6 @@ body {
   border: 0; background: transparent; cursor: pointer; text-align: left;
   padding: 14px 18px; font-size: 15px; color: var(--ink); font-weight: 600;
 }
-.drawer-menu .mi { font-size: 18px; width: 22px; text-align: center; }
 .drawer-menu button:active { background: var(--chip); }
 @media (hover: hover) { .drawer-menu button:hover { background: var(--chip); } }
 

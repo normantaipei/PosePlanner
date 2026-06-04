@@ -62,13 +62,16 @@ export function normalize(item: RawPose): PostView {
   if (item.favorite) badge.push('★')
   if (item.rating) badge.push(item.rating + '/5')
 
+  const authorName = author ? author.name : '未署名'
+
   return {
     id: item.id,
     // 只用縮圖（後端鎖 token 的原圖端點不對外暴露）。
     thumb: mediaUrl(item.thumbnail_path),
     desc: item.description || '',
-    avatar: photographers.length ? '📷' : '👤',
-    author: author ? author.name : '未署名',
+    // 頭像用作者名首字，配漸層底色（取代原本的 emoji icon）。
+    avatar: [...authorName][0] || '?',
+    author: authorName,
     sub: subParts.join('　·　') || '#' + item.id,
     badge: badge.join(' '),
     roleChips: (item.creators || []).map((c) => ({ role: c.role || 'creator', name: c.name })),

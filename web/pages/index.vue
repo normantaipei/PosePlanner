@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 
       <div v-if="loading" class="more-spin">載入中…</div>
       <div v-else-if="capped" class="more-spin">
-        已顯示前 {{ posts.length }} 張 — 想找更多請用上方搜尋縮小範圍 🔍
+        已顯示前 {{ posts.length }} 張 — 想找更多請用上方搜尋縮小範圍
       </div>
       <div ref="sentinel" class="sentinel" />
     </main>

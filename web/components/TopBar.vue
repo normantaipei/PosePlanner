@@ -22,10 +22,9 @@ const emit = defineEmits<{
         <span /><span /><span />
       </button>
       <a class="brand" href="#" @click.prevent="emit('clear')">
-        <span class="logo">📸</span><span class="brand-name">PosePlanner</span>
+        <span class="brand-name">PosePlanner</span>
       </a>
       <form class="searchbar" autocomplete="off" @submit.prevent="emit('submit')">
-        <span class="search-ic">🔍</span>
         <input
           v-model="q"
           type="search"

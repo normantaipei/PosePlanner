@@ -12,15 +12,15 @@ const emit = defineEmits<{
     <div class="drawer-scrim" @click="open = false" />
     <nav class="drawer" aria-label="主選單">
       <div class="drawer-head">
-        <span class="logo">📸</span><span class="drawer-title">PosePlanner</span>
+        <span class="drawer-title">PosePlanner</span>
         <button class="drawer-x" type="button" title="關閉" @click="open = false">✕</button>
       </div>
       <ul class="drawer-menu">
         <li>
-          <button type="button" @click="emit('home')"><span class="mi">🏠</span>搜尋主頁</button>
+          <button type="button" @click="emit('home')">搜尋主頁</button>
         </li>
         <li>
-          <button type="button" @click="emit('dev')"><span class="mi">🛠️</span>開發者資訊</button>
+          <button type="button" @click="emit('dev')">開發者資訊</button>
         </li>
       </ul>
     </nav>
