@@ -8,9 +8,10 @@ export default defineEventHandler(async (event) => {
       headers: { 'x-forwarded-for': clientIp(event) },
     })
   } catch (err: any) {
+    console.error('[api/stats] 後端連線異常：', err?.message || err)
     throw createError({
       statusCode: err?.statusCode || 502,
-      statusMessage: `讀取庫狀態失敗：${err?.message || err}`,
+      statusMessage: '讀取庫狀態失敗，請稍後再試',
     })
   }
 })

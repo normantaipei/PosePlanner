@@ -17,9 +17,11 @@ export default defineEventHandler(async (event) => {
       headers: { 'x-forwarded-for': clientIp(event) },
     })
   } catch (err: any) {
+    // 後端錯誤只記在 server，不把原文（含內網 base_url）回給瀏覽器。
+    console.error('[api/search] 後端連線異常：', err?.message || err)
     throw createError({
       statusCode: err?.statusCode || err?.response?.status || 502,
-      statusMessage: `搜尋失敗（後端 DB server 連線異常）：${err?.message || err}`,
+      statusMessage: '搜尋失敗，請稍後再試',
     })
   }
 })
