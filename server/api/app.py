@@ -19,9 +19,11 @@
   GET  /images/{name}               取『原圖』——需讀寫 token（防整庫高清被搬走）
   GET  /skill                       下載打包好的 skill zip（**僅限區網**，免 token；連線設定即時烤入）
 
-讀取端點（/stats /search /thumbs）需『讀取』token（讀寫或唯讀皆可）。
-原圖 /images 與所有寫入端點需『讀寫』token（環境變數 POSEPLANNER_TOKEN；
-未設定則不檢查，僅建議在純內網時這樣）。/search、/stats 另有速率限制。
+讀取端點（/stats /search /thumbs）需『讀取』token（讀寫或唯讀皆可），可對外網開放。
+原圖 /images/{name} 需『讀寫』token。所有「寫入 DB」的端點（POST /images、
+POST /fragments、PUT /poses/{id}/tags、PUT /poses/{id}/creators、DELETE /poses/{id}）
+除了讀寫 token，還**僅限區網**（require_write_lan，看真實 TCP 對端 IP）——對外網只開放
+web 搜尋。token 未設定則不檢查，僅建議在純內網時這樣。/search、/stats 另有速率限制。
 """
 from __future__ import annotations
 
@@ -193,6 +195,22 @@ def require_lan(request: Request) -> None:
     raise HTTPException(status_code=403, detail="這個端點僅限區網內存取")
 
 
+def require_write_lan(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    t: str | None = None,
+) -> None:
+    """所有『寫入 DB』端點：必須來自區網（真實 TCP 對端 IP）**且**帶讀寫 token。
+
+    對外只開放 web 搜尋（/search /stats /thumbs），入庫 / 改 tag / 刪除一律限內網。
+    先擋來源網段再驗 token：外網即使猜中 token 也會在 require_lan 先被 403。
+    注意：若本服務被反向代理在『同一台』後面，對端 IP 會變成 proxy 的私有/loopback
+    位址而誤判為區網——務必別把寫入端點經由那個 proxy 對外轉發（見 server/README）。
+    """
+    require_lan(request)
+    require_write(authorization, t)
+
+
 # ── 縮圖 ────────────────────────────────────────────────────────────
 def make_thumbnail(img_bytes: bytes, dst: Path) -> bool:
     try:
@@ -278,7 +296,7 @@ async def upload_image(
     favorite: bool = Form(default=False),
     embedding: str | None = Form(default=None),  # 選配 JSON 陣列（384 維）
     embedding_model: str | None = Form(default=None),
-    _: None = Depends(require_write),
+    _: None = Depends(require_write_lan),
 ) -> JSONResponse:
     """收一張原圖 + metadata，直接入庫。content_hash 去重、產縮圖、存原圖。"""
     raw = await file.read()
@@ -346,7 +364,7 @@ async def upload_image(
 @app.post("/fragments")
 async def upload_fragment(
     file: UploadFile = File(...),
-    _: None = Depends(require_write),
+    _: None = Depends(require_write_lan),
 ) -> JSONResponse:
     """收一個 pack 出來的 fragment zip（manifest.json + thumbs/）回放併庫。
     原圖不在 fragment 裡（雲端格式只帶縮圖），所以這條只記縮圖 + metadata。"""
@@ -429,7 +447,7 @@ async def upload_fragment(
 async def update_pose_tags(
     pose_id: int,
     body: dict = Body(...),
-    _: None = Depends(require_write),
+    _: None = Depends(require_write_lan),
 ) -> JSONResponse:
     """改一張 pose 的 tags。body 為 JSON 物件，三種欄位（皆為 [{category,name}, ...]）：
 
@@ -466,7 +484,7 @@ async def update_pose_tags(
 async def update_pose_creators(
     pose_id: int,
     body: dict = Body(...),
-    _: None = Depends(require_write),
+    _: None = Depends(require_write_lan),
 ) -> JSONResponse:
     """改一張 pose 的創作者。body 為 JSON 物件，三種欄位（皆為
     [{name, role, handle?, url?}, ...]，role 省略時預設 'creator'）：
@@ -507,7 +525,7 @@ def get_pose(pose_id: int, _: None = Depends(require_read)) -> JSONResponse:
 
 
 @app.delete("/poses/{pose_id}")
-def delete_pose(pose_id: int, _: None = Depends(require_write)) -> JSONResponse:
+def delete_pose(pose_id: int, _: None = Depends(require_write_lan)) -> JSONResponse:
     """刪一張 pose（需讀寫 token）。連帶清 pose_tags / pose_creators（FK CASCADE）、
     補扣 tag usage_count，並把磁碟上的原圖 + 縮圖一併刪掉（檔名以 content_hash 命名、
     一圖一檔，所以安全）。回傳 {id, content_hash, deleted: true}。"""
