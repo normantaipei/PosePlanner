@@ -16,6 +16,13 @@ export function backendConfig(event: H3Event) {
   return { baseUrl, token }
 }
 
+// 取「真實 client IP」轉給後端：後端限流（slowapi）讀 X-Forwarded-For 第一段分辨來源。
+// 若不轉發，所有公開訪客都頂著 Nuxt 這一個 IP，60/min 會變成全站共用、一人即可卡死所有人。
+// 有上游代理（Cloudflare 等）時取其 XFF，否則退回 TCP 連線位址。
+export function clientIp(event: H3Event): string {
+  return getRequestIP(event, { xForwardedFor: true }) || ''
+}
+
 // 把 token 併進 query：後端用 ?t= 查詢參數驗證讀取權限。
 export function withToken(
   params: Record<string, unknown> | undefined,

@@ -4,14 +4,18 @@ export default defineEventHandler(async (event) => {
   const { baseUrl, token } = backendConfig(event)
   const q = getQuery(event)
 
-  const params: Record<string, unknown> = { t: token || undefined }
+  const params: Record<string, unknown> = {}
   for (const k of ['q', 'tag', 'limit', 'offset'] as const) {
     if (q[k] !== undefined && q[k] !== '') params[k] = q[k]
   }
-  if (!token) delete params.t
+  if (token) params.t = token
 
   try {
-    return await $fetch(`${baseUrl}/search`, { params })
+    // 轉發真實 client IP，後端限流才能 per-user，而非全站共用一個額度。
+    return await $fetch(`${baseUrl}/search`, {
+      params,
+      headers: { 'x-forwarded-for': clientIp(event) },
+    })
   } catch (err: any) {
     throw createError({
       statusCode: err?.statusCode || err?.response?.status || 502,
