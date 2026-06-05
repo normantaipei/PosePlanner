@@ -7,6 +7,12 @@ const emit = defineEmits<{
   submit: []
   clear: []
 }>()
+
+const inputEl = ref<HTMLInputElement>()
+function onSubmit() {
+  inputEl.value?.blur() // 收起手機虛擬鍵盤
+  emit('submit')
+}
 </script>
 
 <template>
@@ -24,8 +30,9 @@ const emit = defineEmits<{
       <a class="brand" href="#" @click.prevent="emit('clear')">
         <span class="brand-name">PosePlanner</span>
       </a>
-      <form class="searchbar" autocomplete="off" @submit.prevent="emit('submit')">
+      <form class="searchbar" autocomplete="off" @submit.prevent="onSubmit">
         <input
+          ref="inputEl"
           v-model="q"
           type="search"
           placeholder="搜尋姿勢、構圖、作品、創作者…例如「回眸 站姿」"
