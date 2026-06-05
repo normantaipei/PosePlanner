@@ -4,8 +4,10 @@
 export default defineEventHandler(async (event) => {
   const { baseUrl, token } = backendConfig(event)
   const rel = (getRouterParam(event, 'path') || '').replace(/^\/+/, '')
-  if (!rel) {
-    throw createError({ statusCode: 400, statusMessage: '缺少圖片路徑' })
+  // 白名單：只代理 thumbs/<檔名>。避免被當成「萬用轉發」打到後端任意路徑，
+  // 也擋掉 ../ 之類的路徑穿越（公開頁只會用到縮圖，原圖端點本就需讀寫 token）。
+  if (!/^thumbs\/[\w.-]+$/.test(rel)) {
+    throw createError({ statusCode: 400, statusMessage: '不合法的圖片路徑' })
   }
 
   const url = new URL(`${baseUrl}/${rel}`)
