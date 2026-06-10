@@ -369,6 +369,7 @@ python3 scripts/make_plan.py --skeleton > plan.json
 ```
 結構：`title` / `subtitle` / `pages[]`（封面與前置頁，block 型別 `info`/`heading`/`para`/`refs`/`table`）
 / `looks[]`（每個 look 自動各佔一頁，含 `fields`/`refs`/`notes`）/ `footer`。
+完整 worked example 見 [`docs/sample_plan.json`](docs/sample_plan.json)（兒童新樂園 miComet 9 頁計劃書）。
 文字支援 `**粗體**`。圖片路徑相對 `--base-dir`（預設 plan.json 所在資料夾）。
 **原則**：一個 Look = 一個場景／地標，把選定的 pose 對應到具體地標，notes 寫 場景/構圖/動作/光線/表情。
 
