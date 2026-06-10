@@ -13,9 +13,12 @@ description: >-
 
 ## 何時用這個 skill
 使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses、找圖、
-**刪圖 / 把這張從庫移除 / delete**…等。
+**刪圖 / 把這張從庫移除 / delete**、**做一份拍攝計劃書 / shooting plan / 規劃某場地的拍攝**…等。
 通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖），
 **或丟一個 Instagram / Twitter(X) 貼文網址**（見下方「社群貼文入庫」）。
+
+> 想做**拍攝計劃書**（挑場地 + 從庫挑 pose + 出一份 PDF）時，直接看下方
+> 「## 拍攝計劃書（make_plan）」整個流程。
 
 ## 儲存後端：二選一（第一次執行時選）
 
@@ -322,6 +325,62 @@ python3 scripts/backend.py delete --ids 3,7 --confirm
 ```
 失敗（連不到 server、token 非讀寫）就**據實回報**，別假裝刪好了。
 
+## 拍攝計劃書（make_plan）
+
+使用者說「幫我規劃在 ○○ 的拍攝 / 做一份拍攝計劃書 / shooting plan」時，把「**研究場地 →
+從庫挑 pose → 排版成 PDF**」串成一份計劃書。產物風格對齊使用者既有的
+`acosta_taipei_shooting_plan_v2.pdf`（白底、灰標籤格、細框線表格、粗體標題加底線、參考圖虛線框）：
+**封面 + 場地資訊 + 時間表 + 每個 Look 一頁**。
+
+> 🧠 一樣是「**Claude 產資料、腳本只排版**」：你負責看圖、挑 pose、研究場地、寫出 `plan.json`，
+> `scripts/make_plan.py` 只把它渲染成 HTML/PDF。
+
+### 1. 整理參考素材
+- 使用者丟的若是**手機 App 截圖**（Pinterest / IG / X，上方有狀態列、下方有按鈕列與推薦），
+  先用 `crop_ui.py` 把上下 UI 外框裁掉、只留主圖：
+  ```bash
+  python3 scripts/crop_ui.py <資料夾或圖> --out-dir reference/ --dry-run   # 先看偵測邊界
+  python3 scripts/crop_ui.py <資料夾或圖> --out-dir reference/             # 實際裁
+  ```
+  偵測不準時用 `--top/--bottom/--left/--right` 手動覆寫（像素）。
+- 把使用者的**實拍範例 / 角色插畫**也放進 `reference/`，這些是計劃書的「預想圖」。
+
+### 2. 研究場地（web search）
+搜該場地的設施 / 地標 / 票務 / 開放時間 / 交通 / 適合取景點，整理成一份
+`location/<場地>.md`（地標表 + 拍攝建議）。這份是計劃書「場地資訊」與「時間表」的素材來源。
+
+### 3. 從 pose 庫挑相符動作
+照「## 檢索（搜尋庫）」流程挑出**貼合主題與調性**的 pose（雙人 cos 就過濾 `people_count=雙人`；
+依場地調性挑情緒，例如親子樂園挑甜美/活潑、剔掉暗黑/殺氣/性感棚拍）。挑完把選中的圖**下載到本地**
+`reference/poselib/` 以便嵌進 PDF：
+- **selfhost**：原圖在 server，用帶**唯讀 token** 的 URL 抓
+  `<base_url>/images/<hash>.jpg?t=<read_token>`（縮圖用 `/thumbs/<hash>.jpg?t=…`）。
+  hash 取自 `backend.py search --json` 的 `image_path`。
+- **drive**：搜尋時 `compact` 出的縮圖已落地在 `/tmp/poseplanner/images/thumbs/`，直接複製。
+
+> ⚠ **已知坑（selfhost）**：server 端 `--tag` 過濾目前可能未生效、且回傳有筆數上限（~100）。
+> 要「依 tag 完整撈某類」時，改成 **抓回來在本地用 Python 過濾 `tags`**（必要時用關鍵字搜尋補抓較舊的），
+> 別只信 server 端過濾。
+
+### 4. 寫 plan.json（你產資料）
+先吐骨架照著填：
+```bash
+python3 scripts/make_plan.py --skeleton > plan.json
+```
+結構：`title` / `subtitle` / `pages[]`（封面與前置頁，block 型別 `info`/`heading`/`para`/`refs`/`table`）
+/ `looks[]`（每個 look 自動各佔一頁，含 `fields`/`refs`/`notes`）/ `footer`。
+文字支援 `**粗體**`。圖片路徑相對 `--base-dir`（預設 plan.json 所在資料夾）。
+**原則**：一個 Look = 一個場景／地標，把選定的 pose 對應到具體地標，notes 寫 場景/構圖/動作/光線/表情。
+
+### 5. 渲染成 PDF
+```bash
+python3 scripts/make_plan.py --plan plan.json --pdf 拍攝計劃.pdf --embed --max-img-width 900
+```
+- `--embed` 把圖 base64 內嵌（產物可攜、不依賴本機檔案）；`--max-img-width` 內嵌前縮圖控制體積。
+- PDF 靠無頭 Chrome/Chromium 列印（腳本自動找）；找不到就**明講**並保留 HTML，請使用者用瀏覽器「列印成 PDF」。
+- 渲染後可用 `pdftoppm -png` 抽幾頁自我檢查版面有沒有溢出（封面內容太多會把圖擠到頁底裁掉——
+  就把區塊拆到下一頁）。
+
 ## 注意
 - 不要重複入庫：以 content_hash 去重，但你也別把同一張圖在 manifest 裡列兩次。
 - 看不清楚或不是 cosplay 的圖，先問使用者，不要硬塞標籤。
@@ -341,5 +400,7 @@ python3 scripts/backend.py delete --ids 3,7 --confirm
 - `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--json` 拿候選、
   `--ids 7,3,12 --table` 把選中的圖（保留順序、含縮圖）印成 Markdown 表直接貼進對話。**已實作**。
 - `scripts/vecdb.py`：sqlite-vec 載入層（挑平台二進位、必要時 re-exec 到可用 python）。
+- `scripts/make_plan.py`：把 `plan.json` 渲染成 acosta 風格的拍攝計劃書 HTML/PDF
+  （`--skeleton` 產骨架 / `--plan … --pdf …` 出 PDF / `--embed` 內嵌圖）。**已實作**。
+- `scripts/crop_ui.py`：把手機 App 截圖上下的 UI 外框裁掉只留主圖（自動偵測，可手動覆寫邊界）。**已實作**。
 - `scripts/update_profile.py`：重算審美畫像（Phase 2，未實作）
-- `scripts/make_plan.py`：產拍攝計劃書（Phase 4，未實作）

@@ -49,6 +49,8 @@ items = [
     "scripts/add_pose.py",
     "scripts/fetch_post.py",
     "scripts/search.py",
+    "scripts/make_plan.py",
+    "scripts/crop_ui.py",
     "scripts/vecdb.py",
     "scripts/schema.sql",
     "scripts/probe_net.py",
