@@ -475,12 +475,12 @@ def update_pose_tags(
 def get_pose(conn: psycopg.Connection, pose_id: int) -> dict | None:
     """取一張 pose 的摘要（給刪除前的 dry-run 確認用）。不存在回 None。"""
     row = conn.execute(
-        "SELECT id, content_hash, image_path, thumbnail_path, description, favorite, rating "
-        "FROM poses WHERE id=%s", (pose_id,)
+        "SELECT id, content_hash, image_path, thumbnail_path, thumb_w, thumb_h, "
+        "description, favorite, rating FROM poses WHERE id=%s", (pose_id,)
     ).fetchone()
     if not row:
         return None
-    pid, ch, image_path, thumb, desc, fav, rating = row
+    pid, ch, image_path, thumb, thumb_w, thumb_h, desc, fav, rating = row
     tags = [
         f"{cat}:{name}"
         for cat, name in conn.execute(
@@ -490,7 +490,8 @@ def get_pose(conn: psycopg.Connection, pose_id: int) -> dict | None:
     ]
     return {
         "id": pid, "content_hash": ch, "image_path": image_path,
-        "thumbnail_path": thumb, "description": desc, "favorite": bool(fav),
+        "thumbnail_path": thumb, "thumb_w": thumb_w, "thumb_h": thumb_h,
+        "description": desc, "favorite": bool(fav),
         "rating": rating, "tags": tags, "creators": pose_creators(conn, pose_id),
     }
 

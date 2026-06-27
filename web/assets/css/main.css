@@ -276,6 +276,46 @@ body {
 .dev-foot { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
   font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
 
+/* ── 分享鈕（卡片頭 + lightbox）───────────────────────── */
+.share-btn {
+  flex: none; margin-left: auto;
+  border: 0; background: transparent; color: var(--ink-soft); cursor: pointer;
+  width: 34px; height: 34px; border-radius: 8px; font-size: 17px; line-height: 1;
+  display: inline-grid; place-items: center;
+}
+/* 有 badge 時 badge 已用 margin-left:auto 推到右側，分享鈕只要跟在後面留點空隙 */
+.share-btn.head-badge-gap { margin-left: 8px; }
+.share-btn:active { background: var(--chip); color: var(--ink); }
+@media (hover: hover) { .share-btn:hover { background: var(--chip); color: var(--ink); } }
+.share-done { font-size: 12px; font-weight: 700; color: #1f8a4c; white-space: nowrap; }
+
+.lb-share {
+  position: fixed; z-index: 51;
+  top: calc(12px + env(safe-area-inset-top)); right: calc(64px + env(safe-area-inset-right));
+  border: 0; background: rgba(255,255,255,.15); color: #fff;
+  height: 44px; min-width: 44px; padding: 0 12px; border-radius: 22px;
+  font-size: 18px; cursor: pointer; display: inline-grid; place-items: center;
+}
+@media (hover: hover) { .lb-share:hover { background: rgba(255,255,255,.28); } }
+.lb-share:active { background: rgba(255,255,255,.35); }
+.lb-share-done { font-size: 14px; font-weight: 700; white-space: nowrap; }
+
+/* ── 單圖分享頁 /p/<id> ───────────────────────────────── */
+.single-bar {
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(255,255,255,.92); backdrop-filter: saturate(180%) blur(8px);
+  border-bottom: 1px solid var(--line); padding-top: env(safe-area-inset-top);
+}
+.single-home {
+  display: inline-block; max-width: 1080px; margin: 0 auto; padding: 14px 16px;
+  color: var(--brand-ink); font-weight: 800; font-size: 17px; text-decoration: none;
+}
+.container.single { max-width: 560px; }
+.feed-single { columns: 1; }
+.single-back { margin-top: 14px; }
+.single-back a { color: var(--brand-ink); font-weight: 700; text-decoration: none; }
+@media (hover: hover) { .single-back a:hover { text-decoration: underline; } }
+
 /* 進場淡入（尊重「減少動態」偏好設定）*/
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .post { animation: fadeUp .25s ease both; }

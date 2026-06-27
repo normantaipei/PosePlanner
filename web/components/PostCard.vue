@@ -13,6 +13,12 @@ const tagsOpen = ref(false)
 const overflowing = ref(false)
 const capEl = ref<HTMLElement | null>(null)
 
+// 分享：複製/喚起系統分享面板，分享這張圖的連結 /p/<id>。
+const { share, shareUrl, justCopied } = useShare()
+function onShare() {
+  share(shareUrl(props.post.id), `PosePlanner #${props.post.id}`)
+}
+
 // 量測敘述在收束狀態下是否溢出，決定要不要顯示「更多」。
 // 量測要在收束時做（展開後 clamp 移除就量不到），故展開時跳過。
 function measure() {
@@ -39,6 +45,17 @@ onMounted(measure)
         <div class="sub">{{ post.sub }}</div>
       </div>
       <div v-if="post.badge" class="head-badge">{{ post.badge }}</div>
+      <button
+        type="button"
+        class="share-btn"
+        :class="{ 'head-badge-gap': post.badge }"
+        :title="justCopied ? '已複製連結' : '分享這張圖'"
+        :aria-label="'分享 pose #' + post.id"
+        @click="onShare"
+      >
+        <span v-if="justCopied" class="share-done">已複製</span>
+        <span v-else aria-hidden="true">↗</span>
+      </button>
     </div>
 
     <div
