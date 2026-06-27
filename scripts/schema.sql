@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS poses (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   image_path     TEXT NOT NULL,            -- 相對於 data/ 的原圖路徑
   thumbnail_path TEXT,                     -- 相對於 data/ 的縮圖路徑
+  thumb_w        INTEGER,                  -- 縮圖寬（給前端預留長寬比、避免捲動跳版）
+  thumb_h        INTEGER,                  -- 縮圖高（同上；缺值前端退回預設比例）
   description    TEXT,                     -- Claude 看圖產的自然語言動作敘述
   content_hash   TEXT NOT NULL UNIQUE,     -- sha256，去重用（同張圖不重複入庫）
   favorite       INTEGER NOT NULL DEFAULT 0,

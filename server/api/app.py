@@ -212,7 +212,8 @@ def require_write_lan(
 
 
 # ── 縮圖 ────────────────────────────────────────────────────────────
-def make_thumbnail(img_bytes: bytes, dst: Path) -> bool:
+def make_thumbnail(img_bytes: bytes, dst: Path) -> tuple[int, int] | None:
+    """產縮圖，回傳縮圖 (寬, 高)；失敗回 None。尺寸給前端預留長寬比、避免捲動跳版。"""
     try:
         from PIL import Image
 
@@ -220,9 +221,20 @@ def make_thumbnail(img_bytes: bytes, dst: Path) -> bool:
             im = im.convert("RGB")
             im.thumbnail((THUMB_MAX, THUMB_MAX))
             im.save(dst, "JPEG", quality=85)
-        return True
+            return im.width, im.height
     except Exception:
-        return False
+        return None
+
+
+def _img_dims(img_bytes: bytes) -> tuple[int, int] | None:
+    """只讀圖檔長寬（不重存），給 fragment 回放時補既有縮圖尺寸。"""
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(img_bytes)) as im:
+            return im.width, im.height
+    except Exception:
+        return None
 
 
 # ── 端點 ────────────────────────────────────────────────────────────
@@ -328,11 +340,13 @@ async def upload_image(
     if not img_dst.exists():
         img_dst.write_bytes(raw)
 
-    # 縮圖
+    # 縮圖（一併取得縮圖長寬，給前端預留版面）
     thumb_dst = THUMBS_DIR / f"{content_hash}.jpg"
-    thumb_rel = None
-    if thumb_dst.exists() or make_thumbnail(raw, thumb_dst):
+    thumb_rel = thumb_w = thumb_h = None
+    tdims = make_thumbnail(raw, thumb_dst)
+    if tdims:
         thumb_rel = f"thumbs/{content_hash}.jpg"
+        thumb_w, thumb_h = tdims
 
     emb = None
     if embedding:
@@ -351,6 +365,8 @@ async def upload_image(
         "favorite": favorite,
         "image_path": f"images/{content_hash}{ext}",
         "thumbnail_path": thumb_rel,
+        "thumb_w": thumb_w,
+        "thumb_h": thumb_h,
         "embedding": emb,
         "embedding_model": embedding_model,
     }
@@ -407,11 +423,18 @@ async def upload_fragment(
             ch = (e.get("content_hash") or "").strip()
             # 落地縮圖
             thumb_rel = None
+            thumb_w, thumb_h = e.get("thumb_w"), e.get("thumb_h")
             if e.get("thumbnail") and f"thumbs/{e['thumbnail']}" in names:
+                tbytes = zf.read(f"thumbs/{e['thumbnail']}")
                 thumb_dst = THUMBS_DIR / f"{ch}.jpg"
                 if not thumb_dst.exists():
-                    thumb_dst.write_bytes(zf.read(f"thumbs/{e['thumbnail']}"))
+                    thumb_dst.write_bytes(tbytes)
                 thumb_rel = f"thumbs/{ch}.jpg"
+                # 舊 fragment 的 manifest 沒帶尺寸時，現場讀縮圖補上。
+                if not (thumb_w and thumb_h):
+                    d = _img_dims(tbytes)
+                    if d:
+                        thumb_w, thumb_h = d
             entry = {
                 "content_hash": ch,
                 "description": e.get("description"),
@@ -422,6 +445,8 @@ async def upload_fragment(
                 "favorite": e.get("favorite"),
                 "image_path": f"images/{ch}{e.get('image_ext') or '.jpg'}",
                 "thumbnail_path": thumb_rel,
+                "thumb_w": thumb_w,
+                "thumb_h": thumb_h,
                 "embedding": e.get("embedding"),
                 "embedding_model": e.get("embedding_model"),
             }
@@ -585,7 +610,8 @@ def search(request: Request, q: str = "", tag: list[str] | None = None, limit: i
         )
         params += [like, like, like, like, like]
 
-    sql = "SELECT p.id, p.image_path, p.thumbnail_path, p.description, p.favorite, p.rating FROM poses p"
+    sql = ("SELECT p.id, p.image_path, p.thumbnail_path, p.thumb_w, p.thumb_h, "
+           "p.description, p.favorite, p.rating FROM poses p")
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += (" ORDER BY p.favorite DESC, p.rating IS NULL, p.rating DESC, p.created_at DESC "
@@ -596,7 +622,7 @@ def search(request: Request, q: str = "", tag: list[str] | None = None, limit: i
     out = []
     with db.pool().connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        for pid, image_path, thumb, desc, fav, rating in rows:
+        for pid, image_path, thumb, thumb_w, thumb_h, desc, fav, rating in rows:
             tags = [
                 f"{cat}:{name}"
                 for cat, name in conn.execute(
@@ -609,6 +635,8 @@ def search(request: Request, q: str = "", tag: list[str] | None = None, limit: i
                 "id": pid,
                 "image_path": image_path,
                 "thumbnail_path": thumb,
+                "thumb_w": thumb_w,
+                "thumb_h": thumb_h,
                 "description": desc,
                 "favorite": bool(fav),
                 "rating": rating,

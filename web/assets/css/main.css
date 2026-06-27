@@ -118,6 +118,11 @@ body {
   break-inside: avoid;
   -webkit-column-break-inside: avoid;
   transition: transform .12s ease, box-shadow .12s ease;
+  /* 畫面外的卡片跳過排版/繪製，只佔一個估高的位置 → 長列表捲動順。
+     卡片本來就 break-inside:avoid 不跨欄，套 content-visibility 的版面內縮安全。
+     auto 會記住實際高度，估值僅用於還沒量過的卡片。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 560px;
 }
 
 .post-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
@@ -131,7 +136,11 @@ body {
 .who .sub { font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-badge { margin-left: auto; font-size: 13px; color: var(--star); font-weight: 700; white-space: nowrap; }
 
-/* 圖片：完整顯示原始比例，不裁切（width 滿版、height 自動） */
+/* 圖片：完整顯示原始比例，不裁切（width 滿版、height 自動）。
+   卡片有後端縮圖尺寸時，會用 inline style 給 .media 一個「精確」的 aspect-ratio，
+   在圖載入前就把正確高度佔好，消掉 lazy 圖撐開造成的捲動跳版；
+   因為比例精確＝載入後 img 自然高度剛好等於預留框，不會裁切也不會留空。
+   （沒有尺寸的舊資料不設比例，退回原本行為，仍靠 content-visibility 改善捲動。） */
 .media { background: var(--bg); cursor: zoom-in; line-height: 0; }
 .media img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
 .media.no-img { aspect-ratio: 4/3; display: grid; place-items: center; cursor: default; }

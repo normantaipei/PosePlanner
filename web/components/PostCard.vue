@@ -38,7 +38,12 @@ onMounted(measure)
       <div v-if="post.badge" class="head-badge">{{ post.badge }}</div>
     </div>
 
-    <div v-if="post.thumb" class="media" @click="emit('openLightbox', post)">
+    <div
+      v-if="post.thumb"
+      class="media"
+      :style="post.ratio ? { aspectRatio: post.ratio } : undefined"
+      @click="emit('openLightbox', post)"
+    >
       <img loading="lazy" :src="post.thumb" :alt="'pose #' + post.id" />
     </div>
     <div v-else class="media no-img"><span>（無縮圖）</span></div>

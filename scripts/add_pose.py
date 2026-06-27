@@ -165,7 +165,24 @@ def connect() -> sqlite3.Connection:
         except ValueError:
             shown = DB_PATH  # db 在 skill 之外（雲端持久化的沙箱副本）
         print(f"  建立新庫：{shown}")
+    else:
+        _migrate(conn)  # 既有庫補新欄位（如 thumb_w/h）
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """既有 SQLite 庫的冪等補欄位。SQLite 沒有 ADD COLUMN IF NOT EXISTS，
+    靠 PRAGMA table_info 判斷缺哪欄再補。新欄位都可為 NULL，不動既有資料。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(poses)")}
+    if not cols:
+        return  # 還沒有 poses 表（理論上 fresh 已建好，這裡保險）
+    added = False
+    for col in ("thumb_w", "thumb_h"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE poses ADD COLUMN {col} INTEGER")
+            added = True
+    if added:
+        conn.commit()
 
 
 def seed_tags(conn: sqlite3.Connection) -> None:
@@ -270,8 +287,9 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def store_image(src: Path, content_hash: str) -> tuple[str, str | None]:
-    """把原圖複製進 data/images/<hash>.<ext>，產縮圖。回傳 (image_rel, thumb_rel|None)。"""
+def store_image(src: Path, content_hash: str) -> tuple[str, str | None, int | None, int | None]:
+    """把原圖複製進 data/images/<hash>.<ext>，產縮圖。
+    回傳 (image_rel, thumb_rel|None, thumb_w|None, thumb_h|None)。"""
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -282,10 +300,23 @@ def store_image(src: Path, content_hash: str) -> tuple[str, str | None]:
 
     thumb = THUMBS_DIR / f"{content_hash}.jpg"
     thumb_rel: str | None = None
+    tw = th = None
     if make_thumbnail(dst, thumb):
         thumb_rel = str(thumb.relative_to(DATA_DIR))
+        tw, th = read_dims(thumb)
 
-    return str(dst.relative_to(DATA_DIR)), thumb_rel
+    return str(dst.relative_to(DATA_DIR)), thumb_rel, tw, th
+
+
+def read_dims(path: Path) -> tuple[int | None, int | None]:
+    """讀圖檔長寬（給前端預留長寬比）；沒有 Pillow 或讀不到就回 (None, None)，不影響入庫。"""
+    try:
+        from PIL import Image  # type: ignore
+
+        with Image.open(path) as im:
+            return im.width, im.height
+    except Exception:
+        return None, None
 
 
 def make_thumbnail(src: Path, dst: Path) -> bool:
@@ -411,12 +442,12 @@ def ingest_one(conn: sqlite3.Connection, entry: dict, dims: dict, base: Path, st
     if exists:
         print(f"  ↻ 重複略過：{src.name}"); st.dup += 1; return
 
-    image_rel, thumb_rel = store_image(src, content_hash)
+    image_rel, thumb_rel, thumb_w, thumb_h = store_image(src, content_hash)
 
     cur = conn.execute(
-        "INSERT INTO poses(image_path, thumbnail_path, description, content_hash, "
-        "favorite, rating, source) VALUES (?,?,?,?,?,?,?)",
-        (image_rel, thumb_rel, description, content_hash,
+        "INSERT INTO poses(image_path, thumbnail_path, thumb_w, thumb_h, description, "
+        "content_hash, favorite, rating, source) VALUES (?,?,?,?,?,?,?,?,?)",
+        (image_rel, thumb_rel, thumb_w, thumb_h, description, content_hash,
          1 if entry.get("favorite") else 0, entry.get("rating"),
          entry.get("source") or src.name),
     )
@@ -593,10 +624,12 @@ def cmd_pack(args) -> None:
             content_hash = sha256_file(src)
             ext = src.suffix.lower() or ".jpg"
             thumb_name = None
+            thumb_w = thumb_h = None
             thumb_dst = tmp / f"{content_hash}.jpg"
             if make_thumbnail(src, thumb_dst):
                 thumb_name = f"{content_hash}.jpg"
                 thumb_files.append((thumb_name, thumb_dst))
+                thumb_w, thumb_h = read_dims(thumb_dst)
                 n_thumb += 1
             else:
                 print(f"    ⚠ {src.name} 沒產出縮圖（缺 Pillow？雲端請先 pip install pillow）")
@@ -611,6 +644,8 @@ def cmd_pack(args) -> None:
                 "favorite": bool(entry.get("favorite")),
                 "image_ext": ext,
                 "thumbnail": thumb_name,
+                "thumb_w": thumb_w,
+                "thumb_h": thumb_h,
                 "embedding": entry.get("embedding"),
                 "embedding_model": entry.get("embedding_model"),
             })
@@ -654,15 +689,19 @@ def compact_one(conn: sqlite3.Connection, entry: dict, dims: dict, frag_dir: Pat
         st.dup += 1; return
 
     thumb_rel = None
+    thumb_w, thumb_h = entry.get("thumb_w"), entry.get("thumb_h")
     if entry.get("thumbnail"):
         thumb_rel = _store_thumb_from(content_hash, frag_dir / "thumbs" / entry["thumbnail"])
+        # 舊 fragment 的 manifest 沒帶尺寸時，現場讀縮圖補上。
+        if thumb_rel and not (thumb_w and thumb_h):
+            thumb_w, thumb_h = read_dims(DATA_DIR / thumb_rel)
     # 原圖留在加圖當下的裝置，本機沒有檔；image_path 只記邏輯路徑供日後對照。
     image_rel = f"images/{content_hash}{entry.get('image_ext') or '.jpg'}"
 
     cur = conn.execute(
-        "INSERT INTO poses(image_path, thumbnail_path, description, content_hash, "
-        "favorite, rating, source) VALUES (?,?,?,?,?,?,?)",
-        (image_rel, thumb_rel, description, content_hash,
+        "INSERT INTO poses(image_path, thumbnail_path, thumb_w, thumb_h, description, "
+        "content_hash, favorite, rating, source) VALUES (?,?,?,?,?,?,?,?,?)",
+        (image_rel, thumb_rel, thumb_w, thumb_h, description, content_hash,
          1 if entry.get("favorite") else 0, entry.get("rating"), entry.get("source")),
     )
     pose_id = cur.lastrowid

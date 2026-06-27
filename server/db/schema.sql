@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS poses (
   id              SERIAL PRIMARY KEY,
   image_path      TEXT,                              -- 伺服器上原圖的相對路徑（images/<hash>.<ext>）
   thumbnail_path  TEXT,                              -- 縮圖相對路徑（thumbs/<hash>.jpg）
+  thumb_w         INTEGER,                           -- 縮圖寬（給前端預留長寬比、避免捲動跳版）
+  thumb_h         INTEGER,                           -- 縮圖高（同上；缺值時前端退回預設比例）
   description     TEXT,                              -- Claude 看圖產的自然語言動作敘述
   content_hash    TEXT NOT NULL UNIQUE,              -- sha256，去重用（同張圖不重複入庫）
   favorite        BOOLEAN NOT NULL DEFAULT FALSE,
@@ -106,6 +108,10 @@ CREATE TABLE IF NOT EXISTS plan_items (
   position INTEGER NOT NULL DEFAULT 0,
   note     TEXT
 );
+
+-- 既有 DB 補欄位（CREATE TABLE IF NOT EXISTS 不會替舊表加欄；冪等可重跑）
+ALTER TABLE poses ADD COLUMN IF NOT EXISTS thumb_w INTEGER;
+ALTER TABLE poses ADD COLUMN IF NOT EXISTS thumb_h INTEGER;
 
 CREATE INDEX IF NOT EXISTS idx_pose_tags_tag ON pose_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tags_category ON tags(category);
