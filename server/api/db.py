@@ -349,12 +349,14 @@ def upsert_pose(conn: psycopg.Connection, entry: dict, dims: set[str]) -> tuple[
 
     emb = _embedding_literal(entry.get("embedding"))
     row = conn.execute(
-        "INSERT INTO poses(image_path, thumbnail_path, description, content_hash, "
-        "favorite, rating, source, embedding, embedding_model) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        "INSERT INTO poses(image_path, thumbnail_path, thumb_w, thumb_h, description, "
+        "content_hash, favorite, rating, source, embedding, embedding_model) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (
             entry.get("image_path"),
             entry.get("thumbnail_path"),
+            entry.get("thumb_w"),
+            entry.get("thumb_h"),
             description,
             content_hash,
             bool(entry.get("favorite")),

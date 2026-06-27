@@ -9,6 +9,8 @@ export interface Creator {
 export interface RawPose {
   id: number
   thumbnail_path?: string
+  thumb_w?: number | null
+  thumb_h?: number | null
   description?: string
   favorite?: boolean
   rating?: number
@@ -19,6 +21,8 @@ export interface RawPose {
 export interface PostView {
   id: number
   thumb: string
+  // 縮圖長寬比字串（如 "3/4"），給卡片預留版面避免捲動跳版；缺尺寸時為空字串（退回 CSS 預設）。
+  ratio: string
   desc: string
   avatar: string
   author: string
@@ -68,6 +72,8 @@ export function normalize(item: RawPose): PostView {
     id: item.id,
     // 只用縮圖（後端鎖 token 的原圖端點不對外暴露）。
     thumb: mediaUrl(item.thumbnail_path),
+    // 有後端縮圖尺寸才給比例（>0 才有效），避免除以 0 或 NaN。
+    ratio: item.thumb_w && item.thumb_h ? `${item.thumb_w}/${item.thumb_h}` : '',
     desc: item.description || '',
     // 頭像用作者名首字，配漸層底色（取代原本的 emoji icon）。
     avatar: [...authorName][0] || '?',

@@ -81,11 +81,13 @@ def _fmt_creators(creators: list[dict]) -> str:
 
 
 def _row_dict(conn, row) -> dict:
-    pid, image_path, thumb, desc, fav, rating = row
+    pid, image_path, thumb, thumb_w, thumb_h, desc, fav, rating = row
     return {
         "id": pid,
         "image_path": image_path,
         "thumbnail_path": thumb,
+        "thumb_w": thumb_w,
+        "thumb_h": thumb_h,
         "description": desc,
         "favorite": bool(fav),
         "rating": rating,
@@ -99,7 +101,7 @@ def fetch_by_ids(conn, ids: list[int]) -> list[dict]:
     out: list[dict] = []
     for pid in ids:
         row = conn.execute(
-            "SELECT id, image_path, thumbnail_path, description, favorite, rating "
+            "SELECT id, image_path, thumbnail_path, thumb_w, thumb_h, description, favorite, rating "
             "FROM poses WHERE id=?", (pid,),
         ).fetchone()
         if row:
@@ -111,7 +113,7 @@ def search_claude(conn, query: str, tag_pairs, limit: int) -> list[dict]:
     """粗篩候選（tag + 關鍵字 LIKE），交給 Claude 做語意排序。"""
     ids = _tag_filter_ids(conn, tag_pairs)
 
-    sql = ("SELECT id, image_path, thumbnail_path, description, favorite, rating "
+    sql = ("SELECT id, image_path, thumbnail_path, thumb_w, thumb_h, description, favorite, rating "
            "FROM poses")
     clauses, params = [], []
     if ids is not None:
@@ -166,7 +168,7 @@ def search_knn(conn, query: str, tag_pairs, limit: int) -> list[dict]:
         if ids is not None and pid not in ids:
             continue
         row = conn.execute(
-            "SELECT id, image_path, thumbnail_path, description, favorite, rating "
+            "SELECT id, image_path, thumbnail_path, thumb_w, thumb_h, description, favorite, rating "
             "FROM poses WHERE id=?", (pid,),
         ).fetchone()
         if row:
