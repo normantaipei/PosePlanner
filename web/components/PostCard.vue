@@ -45,8 +45,12 @@ onMounted(measure)
       @click="emit('openLightbox', post)"
     >
       <img loading="lazy" :src="post.thumb" :alt="'pose #' + post.id" />
+      <span class="media-id">#{{ post.id }}</span>
     </div>
-    <div v-else class="media no-img"><span>（無縮圖）</span></div>
+    <div v-else class="media no-img">
+      <span>（無縮圖）</span>
+      <span class="media-id">#{{ post.id }}</span>
+    </div>
 
     <div class="post-body">
       <div v-if="post.desc" class="caption-wrap">

@@ -141,8 +141,16 @@ body {
    在圖載入前就把正確高度佔好，消掉 lazy 圖撐開造成的捲動跳版；
    因為比例精確＝載入後 img 自然高度剛好等於預留框，不會裁切也不會留空。
    （沒有尺寸的舊資料不設比例，退回原本行為，仍靠 content-visibility 改善捲動。） */
-.media { background: var(--bg); cursor: zoom-in; line-height: 0; }
+.media { background: var(--bg); cursor: zoom-in; line-height: 0; position: relative; }
 .media img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
+/* 圖片右上角的 pose id 小角標（不擋點擊放大）*/
+.media-id {
+  position: absolute; top: 8px; right: 8px;
+  padding: 3px 8px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 1.4;
+  pointer-events: none; backdrop-filter: blur(2px);
+}
 .media.no-img { aspect-ratio: 4/3; display: grid; place-items: center; cursor: default; }
 .media.no-img span { color: var(--ink-soft); font-size: 13px; }
 
