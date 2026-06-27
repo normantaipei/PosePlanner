@@ -32,7 +32,10 @@ onMounted(measure)
     <div class="post-head">
       <div class="avatar">{{ post.avatar }}</div>
       <div class="who">
-        <div class="author">{{ post.author }}</div>
+        <div class="author">
+          <span class="author-name">{{ post.author }}</span>
+          <span class="pid">#{{ post.id }}</span>
+        </div>
         <div class="sub">{{ post.sub }}</div>
       </div>
       <div v-if="post.badge" class="head-badge">{{ post.badge }}</div>
@@ -45,12 +48,8 @@ onMounted(measure)
       @click="emit('openLightbox', post)"
     >
       <img loading="lazy" :src="post.thumb" :alt="'pose #' + post.id" />
-      <span class="media-id">#{{ post.id }}</span>
     </div>
-    <div v-else class="media no-img">
-      <span>（無縮圖）</span>
-      <span class="media-id">#{{ post.id }}</span>
-    </div>
+    <div v-else class="media no-img"><span>（無縮圖）</span></div>
 
     <div class="post-body">
       <div v-if="post.desc" class="caption-wrap">

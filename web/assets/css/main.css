@@ -132,7 +132,10 @@ body {
   background: linear-gradient(135deg, #5b6cff, #8a5bff); flex: none;
 }
 .who { min-width: 0; line-height: 1.25; }
-.who .author { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who .author { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.who .author-name { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* pose id：放名字右邊、可直接選取複製（點一下整段選起來）*/
+.who .pid { flex: none; font-size: 12px; font-weight: 600; color: var(--ink-soft); user-select: all; -webkit-user-select: all; }
 .who .sub { font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-badge { margin-left: auto; font-size: 13px; color: var(--star); font-weight: 700; white-space: nowrap; }
 
@@ -141,16 +144,8 @@ body {
    在圖載入前就把正確高度佔好，消掉 lazy 圖撐開造成的捲動跳版；
    因為比例精確＝載入後 img 自然高度剛好等於預留框，不會裁切也不會留空。
    （沒有尺寸的舊資料不設比例，退回原本行為，仍靠 content-visibility 改善捲動。） */
-.media { background: var(--bg); cursor: zoom-in; line-height: 0; position: relative; }
+.media { background: var(--bg); cursor: zoom-in; line-height: 0; }
 .media img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
-/* 圖片右上角的 pose id 小角標（不擋點擊放大）*/
-.media-id {
-  position: absolute; top: 8px; right: 8px;
-  padding: 3px 8px; border-radius: 999px;
-  background: rgba(0,0,0,.55); color: #fff;
-  font-size: 12px; font-weight: 600; line-height: 1.4;
-  pointer-events: none; backdrop-filter: blur(2px);
-}
 .media.no-img { aspect-ratio: 4/3; display: grid; place-items: center; cursor: default; }
 .media.no-img span { color: var(--ink-soft); font-size: 13px; }
 
