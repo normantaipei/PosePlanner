@@ -101,25 +101,19 @@ body {
 .status { padding: 28px 16px; text-align: center; color: var(--ink-soft); }
 .status.error { color: #d23; }
 
-/* ── feed 瀑布流（CSS multi-column；不同比例照片完整不裁切）──
-   手機 1 欄＝純垂直串流、零重排；寬螢幕才分多欄。 */
-.feed {
-  columns: 1;
-  column-gap: var(--gap);
-}
-@media (min-width: 640px)  { :root { --gap: 16px; } .feed { columns: 2; } }
-@media (min-width: 1000px) { .feed { columns: 3; } }
+/* ── feed 瀑布流（JS 固定欄：每卡永久歸一欄，不會像 multicol 那樣下拉時跨欄重排，issue #8）──
+   欄數由 useMasonry 依視窗寬決定（1 / 2@640 / 3@1000），各欄是獨立的 flex 直欄。 */
+.feed { display: flex; gap: var(--gap); align-items: flex-start; }
+.feed-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--gap); }
+@media (min-width: 640px)  { :root { --gap: 16px; } }
 
 .post {
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   overflow: hidden; display: flex; flex-direction: column;
-  margin-bottom: var(--gap);                   /* multicol 用 margin 當垂直間距 */
-  break-inside: avoid;
-  -webkit-column-break-inside: avoid;
   transition: transform .12s ease, box-shadow .12s ease;
   /* 畫面外的卡片跳過排版/繪製，只佔一個估高的位置 → 長列表捲動順。
-     卡片本來就 break-inside:avoid 不跨欄，套 content-visibility 的版面內縮安全。
+     卡片在固定欄內，估高→真高的變化只影響同欄下方、不會跨欄跳版（issue #8）。
      auto 會記住實際高度，估值僅用於還沒量過的卡片。 */
   content-visibility: auto;
   contain-intrinsic-size: auto 560px;
@@ -311,7 +305,7 @@ body {
   color: var(--brand-ink); font-weight: 800; font-size: 17px; text-decoration: none;
 }
 .container.single { max-width: 560px; }
-.feed-single { columns: 1; }
+.feed-single { display: block; }
 .single-back { margin-top: 14px; }
 .single-back a { color: var(--brand-ink); font-weight: 700; text-decoration: none; }
 @media (hover: hover) { .single-back a:hover { text-decoration: underline; } }

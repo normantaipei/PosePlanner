@@ -19,6 +19,9 @@ const {
   loadStats,
 } = useFeed()
 
+// 固定欄瀑布流（取代 CSS multicol，消除下拉時的跨欄重排，issue #8）。
+const { columns } = useMasonry(posts)
+
 // ── UI 狀態（彈層）──────────────────────────────────────
 const drawerOpen = ref(false)
 const devOpen = ref(false)
@@ -153,13 +156,15 @@ onBeforeUnmount(() => {
       <div v-if="status" class="status" :class="{ error: statusErr }">{{ status }}</div>
 
       <div class="feed">
-        <PostCard
-          v-for="p in posts"
-          :key="p.id"
-          :post="p"
-          @open-lightbox="openLightbox"
-          @tag="onTag"
-        />
+        <div v-for="(col, ci) in columns" :key="ci" class="feed-col">
+          <PostCard
+            v-for="p in col"
+            :key="p.id"
+            :post="p"
+            @open-lightbox="openLightbox"
+            @tag="onTag"
+          />
+        </div>
       </div>
 
       <div v-if="loading" class="more-spin">載入中…</div>
