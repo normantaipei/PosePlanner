@@ -7,7 +7,7 @@
 --   （腳本會先載入 vendored 的 vec0 再 executescript。）
 
 -- 用 rollback journal（預設）而非 WAL：乾淨關閉後不留 -wal/-shm 旁檔，
--- 整個庫就是「單一 library.db」一個檔，方便上傳/下載 Drive、打包分享。
+-- 整個庫就是「單一 library.db」一個檔，方便備份、搬移、打包分享。
 PRAGMA foreign_keys = ON;
 
 -- ── 核心：每一張入庫的 pose ──────────────────────────────

@@ -33,11 +33,12 @@ echo "------------------------------------------------------------------"
 echo "  📦 下載 skill（限區網、免 token，連線設定已烤好）："
 echo "       讀寫版（自己入庫用）：http://${IP}:${PORT}/skill"
 echo "       唯讀版（只給人搜尋）：http://${IP}:${PORT}/skill?token=ro"
-echo "     區網內另一台機器/手機開這網址就會下載 poseplanner-skill.zip，傳到"
-echo "     Claude Desktop → 設定 → Capabilities → Skills → 上傳即可（已連好這台後端）。"
+echo "     在區網內跑 Claude Code 的電腦開這網址下載 poseplanner-skill.zip，再解壓："
+echo "       unzip -o poseplanner-skill.zip -d ~/.claude/skills/poseplanner"
+echo "     重開 Claude Code 即可（已連好這台後端；僅支援 Claude Code，雲端版 Claude 連不到內網）。"
 echo "=================================================================="
 echo
-echo "📋 把下面這段貼給 Claude（每個新對話開頭貼一次，它就記得怎麼連你的私有 DB）："
+echo "📋 沒用上面的 zip、自己 git clone 安裝的話，把下面這段貼給 Claude Code（設定會存在 data/config.json，只需一次）："
 echo "------------------------------------------------------------------"
 cat <<PROMPT
 我的 PosePlanner 用「私有 DB」後端。請在開始任何入庫 / 搜尋前，先設定好連線：
@@ -48,7 +49,7 @@ cat <<PROMPT
 
 入庫：看完圖、寫好 manifest（_ingest.json）後，用
     python3 scripts/backend.py ingest --manifest <manifest 路徑>
-（原圖會直接送進我的私有 DB，不走 Google Drive。）
+（原圖會直接送進我的私有 DB。）
 搜尋：python3 scripts/backend.py search "<描述>" --tag <維度=值> --table
 請勿在回覆裡明文印出 token。
 PROMPT

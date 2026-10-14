@@ -1,18 +1,19 @@
 # PosePlanner 私有 DB（自架）
 
-Google Drive 模式之外的**第二種儲存後端**：把庫存在**你網域內**的一台機器上——
-PostgreSQL 存 metadata、本機硬碟存原圖與縮圖，並提供一個 HTTP **圖片接收服務**。
+本機資料夾圖庫（`local`，預設）之外的**第二種儲存後端**：把庫存在**你網域內**的一台機器上——
+PostgreSQL 存 metadata、硬碟存原圖與縮圖，並提供一個 HTTP **圖片接收服務**。
 
-和純雲端（Drive）模式的差別：
+和本機資料夾模式的差別：
 
-| | Google Drive | 私有 DB（這個） |
+| | 本機資料夾（local） | 私有 DB（這個） |
 |---|---|---|
-| 資料落點 | 你的 Google Drive | 你自己的機器 / 內網 |
-| 原圖 | 不存（只上傳縮圖 fragment） | **存原圖**（無單筆大小上限） |
-| 連線 | Claude 的 Drive 連接器 | 直連 `http://<內網IP>:8000` |
-| 適合 | 手機 / 隨身、零維運 | 家用 NAS / 工作室主機、要留原圖 |
+| 資料落點 | 跑 Claude Code 那台電腦的一個資料夾 | 內網另一台機器（NAS / 工作室主機 / VM） |
+| 安裝 | 不用裝任何服務 | Docker Compose |
+| 多台電腦共用 | ✗ | ✓ |
+| 找圖前端（web/） | ✗ | ✓ |
 
-> 二選一，由 `backend.py` 記在 `data/config.json`。第一次執行時 skill 會問你。
+> 二選一，由 `backend.py` 記在 `data/config.json`。
+> ⚠ skill 只支援 **Claude Code（本機）**：Claude Desktop／手機／網頁版的雲端沙箱連不到你的內網 server。
 
 ---
 
@@ -42,7 +43,7 @@ open  http://localhost:8000/                 # 極簡網頁上傳表單（手動
 
 ## 讓 Claude 端連上
 
-在裝了 skill 的機器（Claude Code / Desktop 沙箱）上：
+在裝了 skill、跑 Claude Code 的機器上（需跟 server 同一個區網）：
 
 ```bash
 python3 scripts/backend.py set --backend selfhost \
@@ -63,7 +64,7 @@ python3 scripts/backend.py status            # 確認連得到
 | GET | `/` | 網頁上傳表單 | 公開 |
 | GET | `/stats` | poses / tags 數 | 讀取 |
 | POST | `/images` | 收**一張原圖 + metadata** 直接入庫（去重、產縮圖、存原圖） | 讀寫 |
-| POST | `/fragments` | 收一個 `pack` 出來的 fragment zip 回放併庫（相容雲端格式，只帶縮圖） | 讀寫 |
+| POST | `/fragments` | 遷移用：收一個舊版 Google Drive 模式的 fragment zip 回放併庫（只帶縮圖） | 讀寫 |
 | PUT | `/poses/{id}/tags` | 改一張 pose 的 tags（整批替換 / 只新增 / 只移除） | 讀寫 |
 | GET | `/search?q=&tag=&limit=` | tag + 關鍵字粗篩候選（語意排序交給 Claude） | 讀取 |
 | GET | `/thumbs/{hash}.jpg` | 取縮圖 | 讀取 |
@@ -72,7 +73,7 @@ python3 scripts/backend.py status            # 確認連得到
 
 ### `/skill` — 區網內直接下載 skill
 
-不必手動 `scp` skill 檔。在**區網內**的另一台機器 / 手機開：
+不必手動 `scp` skill 檔。在**區網內**跑 Claude Code 的電腦開：
 
 ```
 http://<這台機器內網IP>:8000/skill            # 讀寫版（自己入庫用，預設）
@@ -81,8 +82,11 @@ http://<這台機器內網IP>:8000/skill?token=none  # 不烤 token（上傳後�
 ```
 
 會即時把 `SKILL.md` / `scripts/` / `vendor/sqlite-vec/` 打包成 `poseplanner-skill.zip`，
-並把 `data/config.json` 烤成「指向這台 server」——下載解開即為**私有 DB 已連線**狀態，
-直接傳到 Claude Desktop → 設定 → Capabilities → Skills → 上傳即可。
+並把 `data/config.json` 烤成「指向這台 server」——下載後解壓即為**私有 DB 已連線**狀態：
+
+```bash
+unzip -o poseplanner-skill.zip -d ~/.claude/skills/poseplanner   # 重開 Claude Code 即可
+```
 
 - **安全**：只放行**私有網段 / loopback / link-local** 的來源 IP（用真實 TCP 對端，
   **不信任**可偽造的 `X-Forwarded-For`），公網來源一律 `403`。要放行 VPN 子網等額外網段，

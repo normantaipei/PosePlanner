@@ -129,10 +129,12 @@ cat <<EOF
     區網/外網： ${BASE_URL%:*}:${WEB_PORT_FINAL}/   （雲端 VM 記得防火牆放行 TCP ${WEB_PORT_FINAL}）
   前端已自動帶入『唯讀』token：只看得到縮圖，搬不走原圖，可安心分享這個網址。
 
-② 安裝 skill（入庫端，已自動烤入『讀寫』連線，上傳即用、免再設定）
+② 安裝 skill（入庫端，已自動烤入『讀寫』連線，解壓即用、免再設定）
     zip 路徑：${SKILL_ZIP}
-    Claude Desktop → 設定 → Capabilities/能力 → Skills → Upload skill → 選上面這個 zip → 啟用
-  之後在對話裡丟 cos 圖說「加進 pose 庫」，圖會直接入到你這台後端。
+    把 zip 複製到你跑 Claude Code 的電腦（需跟這台後端同一個區網），然後：
+      unzip -o poseplanner-skill.zip -d ~/.claude/skills/poseplanner
+    重開 Claude Code，在對話裡丟 cos 圖說「加進 pose 庫」，圖會直接入到你這台後端。
+    ⚠ skill 只支援 Claude Code（本機）；Claude Desktop／手機／網頁版的雲端沙箱連不到你的內網。
 
 ③ 連線資訊
     後端 domain：${BASE_URL}

@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """PosePlanner — 儲存後端選擇與私有 DB 客戶端。
 
-PosePlanner 有兩種儲存後端，第一次執行時二選一（記在 data/config.json）：
+PosePlanner 只在 Claude Code（本機）執行，有兩種儲存後端（記在 data/config.json）：
 
-  1) drive     — 純雲端：pack 成 fragment 上傳到你的 Google Drive（由 Claude 用連接器做）。
+  1) local     — 本機資料夾（預設、零安裝）：指定一個資料夾當圖庫，
+                 library.db + images/ + images/thumbs/ 都放在裡面（預設 ~/PosePlanner）。
+                 入庫 / 搜尋 / 刪圖走 add_pose.py、search.py。
   2) selfhost  — 私有 DB：直連你網域內自架的 server（server/docker-compose.yml），
                  原圖 + metadata 存在你自己的機器（PostgreSQL + 硬碟）。
 
+沒設定時視同 local（預設資料夾），所以什麼都不裝也能直接入庫。
 這支腳本只用 Python 標準庫（urllib），不需要任何 pip 安裝。
 
 設定
 ────
   python3 scripts/backend.py status                         # 看目前後端
   python3 scripts/backend.py setup                          # 互動式選擇（終端機用）
-  python3 scripts/backend.py set --backend drive            # 用 Google Drive
+  python3 scripts/backend.py set --backend local \          # 用本機資料夾
+      --path ~/PosePlanner
   python3 scripts/backend.py set --backend selfhost \       # 用私有 DB
       --base-url http://192.168.1.50:8000 --token <token>
 
@@ -22,17 +26,17 @@ PosePlanner 有兩種儲存後端，第一次執行時二選一（記在 data/co
   python3 scripts/backend.py ingest  --manifest /tmp/poseplanner/_ingest.json
       # 把 manifest 裡每張「原圖 + description + tags」POST 到 server /images（去重）。
   python3 scripts/backend.py push --fragment frag-xxx.zip
-      # 把一個已 pack 的 fragment zip POST 到 server /fragments（相容雲端格式）。
+      # 遷移用：把舊版 Google Drive 模式留下的 fragment zip POST 到 server /fragments。
   python3 scripts/backend.py search "回眸帥氣站姿" --tag framing=半身 --table
       # 對 server /search 粗篩，印 Markdown 表（縮圖用 server URL，內網可直接渲染）。
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import mimetypes
 import os
+import sqlite3
 import sys
 import urllib.error
 import urllib.parse
@@ -41,8 +45,11 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("POSEPLANNER_DATA", str(ROOT / "data")))
-CONFIG_PATH = Path(os.environ.get("POSEPLANNER_CONFIG", str(DATA_DIR / "config.json")))
+# 設定檔跟著 skill 走（skill 內的 data/config.json），與圖庫放在哪無關。
+CONFIG_PATH = Path(os.environ.get("POSEPLANNER_CONFIG", str(ROOT / "data" / "config.json")))
+# local 後端沒指定資料夾時的預設圖庫位置。
+DEFAULT_LIBRARY_DIR = Path.home() / "PosePlanner"
+BACKENDS = ("local", "selfhost")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".tiff"}
 
@@ -61,6 +68,14 @@ def save_config(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"已寫入設定：{CONFIG_PATH}")
+
+
+def library_dir(cfg: dict | None = None) -> Path:
+    """local 後端的圖庫資料夾：config 的 local.path，沒設就用預設 ~/PosePlanner。"""
+    if cfg is None:
+        cfg = load_config()
+    path = ((cfg or {}).get("local") or {}).get("path")
+    return Path(path).expanduser() if path else DEFAULT_LIBRARY_DIR
 
 
 def require_selfhost(cfg: dict | None) -> dict:
@@ -142,17 +157,44 @@ def _post_multipart(sh: dict, path: str, fields: dict, files: list, timeout: int
 
 
 # ── 子指令 ──────────────────────────────────────────────────────────
+def _print_local_status(path: Path) -> None:
+    db_path = path / "library.db"
+    print(f"  圖庫資料夾：{path}")
+    if not db_path.exists():
+        print("  庫狀態    ：尚未建庫（第一次入庫時自動建立）")
+        return
+    try:
+        # 只數一般表，不碰 vec0 虛擬表，所以不需要載入 sqlite-vec。
+        conn = sqlite3.connect(db_path)
+        try:
+            n_poses = conn.execute("SELECT COUNT(*) FROM poses").fetchone()[0]
+            n_tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+            n_creators = conn.execute("SELECT COUNT(*) FROM creators").fetchone()[0]
+        finally:
+            conn.close()
+        print(f"  庫狀態    ：poses={n_poses} tags={n_tags} creators={n_creators}")
+    except sqlite3.Error as e:
+        print(f"  庫狀態    ：✗ 讀不到 library.db（{e}）")
+
+
 def cmd_status(args) -> None:
     cfg = load_config()
     if not cfg:
-        print("尚未設定後端。第一次使用請選一種：")
-        print("  • Google Drive：python3 scripts/backend.py set --backend drive")
-        print("  • 私有 DB     ：python3 scripts/backend.py set --backend selfhost "
+        print("尚未設定後端 → 預設用本機資料夾（local）。")
+        _print_local_status(library_dir(cfg))
+        print("\n要換位置或改用私有 DB：")
+        print("  • 本機資料夾：python3 scripts/backend.py set --backend local --path <資料夾>")
+        print("  • 私有 DB   ：python3 scripts/backend.py set --backend selfhost "
               "--base-url http://<內網IP>:8000 --token <token>")
-        print("  • 互動式      ：python3 scripts/backend.py setup")
+        print("  • 互動式    ：python3 scripts/backend.py setup")
         return
     backend = cfg.get("backend")
     print(f"後端：{backend}")
+    if backend == "local":
+        _print_local_status(library_dir(cfg))
+    elif backend not in BACKENDS:
+        print(f"  ⚠ 不支援的後端「{backend}」（Google Drive 模式已移除）。")
+        print("    請重新設定：python3 scripts/backend.py set --backend local（或 selfhost）")
     if backend == "selfhost":
         sh = cfg.get("selfhost") or {}
         print(f"  base_url：{sh.get('base_url')}")
@@ -168,9 +210,11 @@ def cmd_status(args) -> None:
 
 
 def cmd_set(args) -> None:
-    if args.backend == "drive":
-        save_config({"backend": "drive"})
-        print("已設為 Google Drive 模式：pack 後由 Claude 用連接器上傳到你的 Drive。")
+    if args.backend == "local":
+        path = Path(args.path).expanduser().resolve() if args.path else DEFAULT_LIBRARY_DIR
+        save_config({"backend": "local", "local": {"path": str(path)}})
+        path.mkdir(parents=True, exist_ok=True)
+        print(f"已設為本機資料夾模式：圖庫在 {path}")
         return
     if args.backend == "selfhost":
         if not args.base_url:
@@ -185,18 +229,18 @@ def cmd_set(args) -> None:
         except SystemExit as e:
             print(f"⚠ 設定已存，但連線測試失敗：{e}")
         return
-    raise SystemExit("--backend 只能是 drive 或 selfhost")
+    raise SystemExit("--backend 只能是 local 或 selfhost")
 
 
 def cmd_setup(args) -> None:
     """互動式（終端機）。Claude 端通常改用 set（先在對話裡問使用者再 set）。"""
     print("PosePlanner 第一次設定 — 選擇庫要存在哪：\n")
-    print("  1) Google Drive（純雲端，零維運，原圖不留）")
+    print("  1) 本機資料夾（零安裝，庫和原圖都在這台電腦）")
     print("  2) 私有 DB（自架 server，原圖留在你網域內的機器）\n")
     choice = input("輸入 1 或 2：").strip()
     if choice == "1":
-        save_config({"backend": "drive"})
-        print("✓ 已選 Google Drive。")
+        path = input(f"圖庫資料夾（Enter 用預設 {DEFAULT_LIBRARY_DIR}）：").strip()
+        cmd_set(argparse.Namespace(backend="local", path=path or None))
     elif choice == "2":
         base_url = input("server 位址（如 http://192.168.1.50:8000）：").strip()
         token = input("Bearer token（server .env 的 POSEPLANNER_TOKEN，沒設就留空）：").strip()
@@ -308,7 +352,7 @@ def cmd_image(args) -> None:
 
 
 def cmd_push(args) -> None:
-    """selfhost：把一個已 pack 的 fragment zip POST 到 /fragments。"""
+    """遷移用：把舊版 Google Drive 模式留下的 fragment zip POST 到 selfhost /fragments。"""
     sh = require_selfhost(load_config())
     zip_path = Path(args.fragment).expanduser()
     if not zip_path.exists():
@@ -316,7 +360,7 @@ def cmd_push(args) -> None:
     status, parsed = _post_multipart(sh, "/fragments", {}, [("file", zip_path.name, zip_path.read_bytes())])
     if status >= 400:
         raise SystemExit(f"上傳 fragment 失敗（{status}）：{parsed}")
-    print(f"OK（私有 DB 回放）：{parsed}")
+    print(f"OK（已匯入私有 DB）：{parsed}")
 
 
 def _parse_ids(chunks: list | None) -> list[int]:
@@ -460,8 +504,9 @@ def main() -> None:
     sub.add_parser("status", help="看目前後端與連線狀態").set_defaults(func=cmd_status)
     sub.add_parser("setup", help="互動式選擇後端（終端機用）").set_defaults(func=cmd_setup)
 
-    ps = sub.add_parser("set", help="設定後端（drive / selfhost）")
-    ps.add_argument("--backend", required=True, choices=["drive", "selfhost"])
+    ps = sub.add_parser("set", help="設定後端（local / selfhost）")
+    ps.add_argument("--backend", required=True, choices=list(BACKENDS))
+    ps.add_argument("--path", help=f"local 圖庫資料夾（預設 {DEFAULT_LIBRARY_DIR}）")
     ps.add_argument("--base-url", help="selfhost server 位址，如 http://192.168.1.50:8000")
     ps.add_argument("--token", help="selfhost token：入庫端用『讀寫』token "
                     "（POSEPLANNER_TOKEN）；只搜尋的人用『唯讀』token（POSEPLANNER_READ_TOKEN）")
@@ -482,7 +527,7 @@ def main() -> None:
     pim.add_argument("--favorite", action="store_true")
     pim.set_defaults(func=cmd_image)
 
-    pp = sub.add_parser("push", help="selfhost：POST 一個 fragment zip 到 /fragments")
+    pp = sub.add_parser("push", help="遷移用：把舊 Drive fragment zip POST 到 selfhost /fragments")
     pp.add_argument("--fragment", required=True)
     pp.set_defaults(func=cmd_push)
 

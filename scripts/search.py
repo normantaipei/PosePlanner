@@ -23,7 +23,8 @@
 
      python3 scripts/search.py "持刀回眸" --knn --limit 10
 
-路徑旗標 --db / --data 與 add_pose.py 相同（雲端持久化時指到沙箱副本）。
+查的是本機資料夾圖庫（預設讀 data/config.json 的 local.path，沒設就是 ~/PosePlanner）；
+路徑旗標 --db / --data 與 add_pose.py 相同，可臨時指到別的圖庫。
 """
 from __future__ import annotations
 
