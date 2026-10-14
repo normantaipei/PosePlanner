@@ -79,7 +79,7 @@ build_web_in_container() {
     --security-opt apparmor=unconfined \
     -v "$DIR/web":/src:ro \
     -v "$stage":/out \
-    node:22-slim bash -lc '
+    node:24-slim bash -lc '
       set -e
       mkdir -p /build && cp -a /src/. /build/ && cd /build
       # 丟掉 host 帶來的 lockfile / node_modules：lockfile 多半是 macOS 產的、缺 linux
@@ -92,7 +92,7 @@ build_web_in_container() {
       cp -a /build/.output /out/.output
     ' || { rm -rf "$stage" 2>/dev/null || $SUDO rm -rf "$stage"; die "容器內編譯前端失敗。"; }
   cat > "$stage/Dockerfile" <<'DOCKERFILE'
-FROM node:22-slim
+FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=3000 PORT=3000
 COPY .output ./.output
