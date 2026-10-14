@@ -30,6 +30,9 @@ export default defineNuxtConfig({
     poseplannerToken: '', // server 的『讀取』token（POSEPLANNER_READ_TOKEN）；沒設就留空
     public: {
       // 這裡放可以公開的設定即可——token 一律不放這。
+      // 前端對外的正式網址（NUXT_PUBLIC_SITE_URL），如 https://pose.example.com。
+      // 用來組分享預覽（og:image / og:url）的絕對網址；沒設就用請求進來的網址。
+      siteUrl: '',
     },
   },
 })

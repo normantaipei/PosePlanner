@@ -28,6 +28,7 @@
 #   POSEPLANNER_DIR   安裝目錄（預設 $HOME/PosePlanner）
 #   POSEPLANNER_REPO  repo 網址（預設官方 GitHub）
 #   WEB_PORT          前端對外埠（預設 8080，被占用會自動往上避讓）
+#   SITE_URL          前端對外的正式網址（如 https://pose.example.com），給分享連結預覽圖用；選配
 set -euo pipefail
 
 REPO="${POSEPLANNER_REPO:-https://github.com/normantaipei/PosePlanner.git}"
@@ -158,6 +159,7 @@ $DOCKER_SUDO docker run -d \
   -p "${PORT}:3000" \
   -e NUXT_POSEPLANNER_BASE_URL="$BASE_URL" \
   -e NUXT_POSEPLANNER_TOKEN="$TOKEN" \
+  -e NUXT_PUBLIC_SITE_URL="${SITE_URL:-}" \
   "$IMAGE" >/dev/null
 
 # ── 6. 連線資訊 ─────────────────────────────────────────────────────
