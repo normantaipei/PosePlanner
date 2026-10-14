@@ -87,3 +87,19 @@ export function normalize(item: RawPose): PostView {
     })),
   }
 }
+
+// 分享預覽（Open Graph）用的標題 / 描述：聊天軟體（Discord / LINE / Slack / Messenger）
+// 貼上 /p/<id> 時顯示的卡片文字。標題用作品・角色，描述用動作敘述（截到 100 字）。
+const OG_DESC_MAX = 100
+
+export function shareMeta(item: RawPose): { title: string; description: string } {
+  const valuesOf = (cat: string) =>
+    (item.tags || []).filter((t) => t.startsWith(cat + ':')).map((t) => t.slice(cat.length + 1))
+  const subject = [...valuesOf('ip'), ...valuesOf('character')].join('・')
+  const title = subject ? `PosePlanner — ${subject}` : `PosePlanner — 圖片 #${item.id}`
+
+  const chars = [...(item.description || '').replace(/\s+/g, ' ').trim()]
+  const description =
+    chars.length > OG_DESC_MAX ? chars.slice(0, OG_DESC_MAX - 1).join('') + '…' : chars.join('')
+  return { title, description: description || 'Cosplay 拍攝參考圖' }
+}

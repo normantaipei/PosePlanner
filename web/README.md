@@ -65,5 +65,20 @@ NUXT_POSEPLANNER_BASE_URL=http://192.168.x.x:8000 NUXT_POSEPLANNER_TOKEN=... \
   node .output/server/index.mjs        # 或：npm start
 ```
 
+## 分享連結預覽（縮圖）
+
+單圖分享頁 `/p/<id>` 會在 SSR 時輸出 Open Graph 標籤（`og:image` / `og:title` / `og:description`），
+把連結貼到 Discord / LINE / Slack / Messenger 時，聊天室會先顯示這張圖的縮圖預覽卡。
+
+- **前端必須能從公網連到**：預覽是由各平台的伺服器去抓網頁與縮圖，區網網址（`http://192.168.x.x`）
+  抓不到，就不會有縮圖。最好是 **https**（Messenger 最嚴格）；家用環境可用 Cloudflare Tunnel 等方式開一個對外網址。
+- **`NUXT_PUBLIC_SITE_URL`（選配）**：設成對外正式網址（如 `https://pose.example.com`），預覽圖網址就用它組。
+  沒設時用請求進來的網址（會讀反向代理的 `X-Forwarded-Host` / `X-Forwarded-Proto`）。
+  一鍵部署可用 `SITE_URL=https://pose.example.com` 帶入。
+- **檢查**：`curl -s -A Discordbot https://pose.example.com/p/12 | grep 'og:'`；或用
+  [Facebook Sharing Debugger](https://developers.facebook.com/tools/debug/)、
+  [LINE Page Poker](https://poker.line.naver.jp/) 看平台實際抓到什麼。
+  LINE / Discord 會快取預覽，同一個網址第一次抓錯，之後可能要等一段時間或用 Page Poker 清快取。
+
 > 純靜態(`npm run generate`)會失去 server 代理 → token 就藏不住、圖片也代理不了。
 > 這個前端刻意走 SSR;要靜態託管請改回「token 放前端」的設計。

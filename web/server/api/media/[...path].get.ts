@@ -24,8 +24,9 @@ export default defineEventHandler(async (event) => {
   setHeader(event, 'content-type', upstream.headers.get('content-type') || 'image/jpeg')
   const len = upstream.headers.get('content-length')
   if (len) setHeader(event, 'content-length', len)
-  // 縮圖內容不變、可長快取（私有頁，放 private 即可）。
-  setHeader(event, 'cache-control', 'private, max-age=86400')
+  // 縮圖以 content_hash 命名、內容不變，可長快取。用 public：聊天軟體抓分享預覽圖
+  // （og:image）時，平台與中間的 CDN 都能快取，不必每次都打到後端。
+  setHeader(event, 'cache-control', 'public, max-age=86400')
 
   return upstream.body
 })
