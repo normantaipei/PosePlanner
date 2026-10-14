@@ -5,7 +5,9 @@
 # ── build ───────────────────────────────────────────────
 # 用 Debian slim（glibc）而非 alpine（musl）：避開 Nuxt 依賴的原生套件
 # （oxc-parser / rollup）在 musl 上的 native binding 問題。
-FROM node:22-slim AS build
+# 用 Node 24（內建 npm 11）：Node 22 的 npm 10.9.x 從零解析 Nuxt 3 依賴時會炸
+# `Cannot read properties of null (reading 'edgesOut')`（npm arborist 的 bug）。
+FROM node:24-slim AS build
 WORKDIR /app
 # 只帶 package.json（不帶 host 的 package-lock）：host 在 macOS 產的 lockfile 沒有
 # linux 的 optional 原生套件（@oxc-parser/binding-linux-*），會觸發 npm/cli#4828。
@@ -22,7 +24,7 @@ COPY . .
 RUN npm run build
 
 # ── runtime ─────────────────────────────────────────────
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NITRO_HOST=0.0.0.0 \
