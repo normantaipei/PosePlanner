@@ -18,7 +18,7 @@ const emit = defineEmits<{ close: [] }>()
         <a class="dev-link" href="https://www.facebook.com/profile.php?id=61590236002360" target="_blank" rel="noopener noreferrer">Facebook</a>
         <a class="dev-link" href="https://x.com/HsiaoNorman" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
       </div>
-      <p class="dev-foot">純雲端設計，圖片儲存於使用者的 Google Drive。</p>
+      <p class="dev-foot">自架私有 DB，圖片儲存於使用者自己的機器。</p>
     </div>
   </div>
 </template>

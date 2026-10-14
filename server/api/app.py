@@ -1,15 +1,15 @@
-"""PosePlanner 自架 server — 圖片 / fragment 接收服務（FastAPI）。
+"""PosePlanner 自架 server — 圖片接收服務（FastAPI）。
 
-這是「私有 DB」模式的後端：跟 Google Drive 模式二選一。和純雲端不同，
-私有 server **可以收原圖**並存在你網域內的硬碟 + PostgreSQL，不受 Drive
-「只能新建、單筆大小上限」的限制。
+這是「私有 DB」（selfhost）後端：跟「本機資料夾圖庫」（local）二選一。
+私有 server 收原圖並存在你網域內的硬碟 + PostgreSQL，可給多台電腦共用、
+也能接找圖前端（web/）。skill 端只在 Claude Code（本機）執行，才連得到內網。
 
 端點
 ────
   GET  /health                      健康檢查（免 token）
   GET  /stats                       庫狀態（poses / tags 數）
   POST /images     (multipart)      收「一張原圖 + metadata」直接入庫（去重、產縮圖）
-  POST /fragments  (multipart)      收一個 pack 出來的 fragment zip，回放併庫（相容雲端格式）
+  POST /fragments  (multipart)      遷移用：收一個舊版 Google Drive 模式的 fragment zip，回放併庫
   PUT  /poses/{id}/tags  (json)     改一張 pose 的 tags（整批替換 / 只新增 / 只移除）
   PUT  /poses/{id}/creators (json)  改一張 pose 的創作者（模特兒 / 攝影師…；整批替換 / 增 / 移除）
   GET  /poses/{id}                  取一張 pose 摘要（刪除前 dry-run 確認用）
@@ -71,7 +71,8 @@ REPO_DIR = Path(os.environ["POSEPLANNER_REPO"]) if os.environ.get("POSEPLANNER_R
 SKILL_FILES = [
     "SKILL.md", "taxonomy.yaml", "requirements.txt",
     "scripts/backend.py", "scripts/add_pose.py", "scripts/fetch_post.py",
-    "scripts/search.py", "scripts/vecdb.py", "scripts/schema.sql", "scripts/probe_net.py",
+    "scripts/search.py", "scripts/make_plan.py", "scripts/crop_ui.py",
+    "scripts/vecdb.py", "scripts/schema.sql",
 ]
 SKILL_DIRS = ["vendor/sqlite-vec"]
 
@@ -251,7 +252,8 @@ def download_skill(
 ) -> Response:
     """即時打包並下載 skill zip（**限區網**）。
 
-    會把連線設定即時烤進 zip 裡的 `data/config.json`，下載解開即為「私有 DB 已連線」狀態：
+    會把連線設定即時烤進 zip 裡的 `data/config.json`，解壓到 ~/.claude/skills/poseplanner/
+    即為「私有 DB 已連線」狀態：
       base_url = 你存取本服務所用的網址（從這個請求推得）；token 由 ?token= 決定。
     """
     missing = [f for f in SKILL_FILES if not (REPO_DIR / f).is_file()]
@@ -382,8 +384,8 @@ async def upload_fragment(
     file: UploadFile = File(...),
     _: None = Depends(require_write_lan),
 ) -> JSONResponse:
-    """收一個 pack 出來的 fragment zip（manifest.json + thumbs/）回放併庫。
-    原圖不在 fragment 裡（雲端格式只帶縮圖），所以這條只記縮圖 + metadata。"""
+    """遷移用：收一個舊版 Google Drive 模式的 fragment zip（manifest.json + thumbs/）回放併庫。
+    原圖不在 fragment 裡（舊格式只帶縮圖），所以這條只記縮圖 + metadata。"""
     raw = await file.read()
     try:
         zf = zipfile.ZipFile(io.BytesIO(raw))
@@ -395,7 +397,7 @@ async def upload_fragment(
         raise HTTPException(status_code=400, detail="zip 內缺 manifest.json")
     entries = json.loads(zf.read("manifest.json").decode("utf-8"))
 
-    # tombstone fragment（drive 模式的刪除單位）：manifest 是帶 op 的物件，回放即「刪除」。
+    # tombstone fragment（舊 Drive 模式的刪除單位）：manifest 是帶 op 的物件，回放即「刪除」。
     if isinstance(entries, dict) and entries.get("poseplanner_op") == "delete":
         hashes = [h.strip() for h in (entries.get("content_hashes") or []) if str(h).strip()]
         removed = 0

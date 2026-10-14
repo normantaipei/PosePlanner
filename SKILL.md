@@ -1,82 +1,67 @@
 ---
 name: poseplanner
 description: >-
-  Cosplay 拍攝參考庫（純雲端）。當使用者要「餵圖入庫 / 分析 cos 圖 / 把圖加進 pose 庫 /
-  add poses / 整理 cosplay 參考圖」時使用。看圖產出動作敘述與結構化標籤，
-  依 taxonomy 約束打包成小 fragment 上傳到使用者的 Google Drive，逐步累積審美庫。
+  Cosplay 拍攝參考庫（Claude Code 本機執行）。當使用者要「餵圖入庫 / 分析 cos 圖 / 把圖加進 pose 庫 /
+  add poses / 整理 cosplay 參考圖 / 找圖 / 刪圖 / 做拍攝計劃書」時使用。看圖產出動作敘述與結構化標籤，
+  依 taxonomy 約束寫進使用者的本機資料夾圖庫（或自架私有 DB），逐步累積審美庫。
 ---
 
-# PosePlanner — 圖片入庫（純雲端）
+# PosePlanner — cosplay 拍攝參考庫
 
 你是一個 cosplay 拍攝參考庫的管理員。使用者每天會丟「他覺得漂亮」的 cos 圖進來，
 你要看圖、產出敘述與標籤、入庫。每一張入庫的圖都是一個正向的審美訊號。
 
+> ⚠️ **這個 skill 只在 Claude Code（本機）執行。** 它要讀寫本機資料夾、或連使用者內網的私有 DB，
+> Claude Desktop／手機／claude.ai 的雲端沙箱都做不到（連不到內網，資料也不會留下來）。
+> 若你發現自己不在 Claude Code 環境（例如沒有使用者的本機檔案系統），請直接說明不支援，別假裝存好了。
+
 ## 何時用這個 skill
 使用者說：餵圖、入庫、分析這些 cos 圖、把這資料夾加進庫、add poses、找圖、
 **刪圖 / 把這張從庫移除 / delete**、**做一份拍攝計劃書 / shooting plan / 規劃某場地的拍攝**…等。
-通常會給你一個資料夾或幾張圖（手機/Desktop 上是「上傳/分享」的圖），
+通常會給你一個本機資料夾或幾張圖的路徑，
 **或丟一個 Instagram / Twitter(X) 貼文網址**（見下方「社群貼文入庫」）。
 
 > 想做**拍攝計劃書**（挑場地 + 從庫挑 pose + 出一份 PDF）時，直接看下方
 > 「## 拍攝計劃書（make_plan）」整個流程。
 
-## 儲存後端：二選一（第一次執行時選）
+## 儲存後端：二選一
 
-庫可以存在兩種地方，**第一次使用時要先選一種**，記在 `data/config.json`：
+庫可以存在兩種地方，記在 skill 的 `data/config.json`：
 
-- **`drive`（Google Drive，純雲端）**：pack 成 fragment 上傳到使用者的 Google Drive，零維運、原圖不留。手機 / Desktop 適用。
-- **`selfhost`（私有 DB，自架）**：直連使用者網域內自架的 server（`server/docker-compose.yml`，PostgreSQL + 圖片接收服務），**原圖留在使用者自己的機器**，無單筆大小上限。
+- **`local`（本機資料夾，預設、零安裝）**：指定一個本機資料夾當圖庫，`library.db`（SQLite + sqlite-vec）、
+  `images/`（原圖）、`images/thumbs/`（縮圖）都放在裡面。預設 `~/PosePlanner`。
+  入庫 / 搜尋 / 刪圖走 `add_pose.py`、`search.py`。
+- **`selfhost`（私有 DB，自架）**：直連使用者網域內自架的 server（`server/docker-compose.yml`，
+  PostgreSQL + 圖片接收服務），多台電腦共用、可接找圖前端。入庫 / 搜尋 / 刪圖走 `backend.py`。
 
 **開場必做**：先看目前後端——
 ```bash
 python3 scripts/backend.py status
 ```
-- 若印出「尚未設定後端」，**在對話裡問使用者要用哪一種**（Google Drive 還是已架好的私有 DB），然後幫他寫設定：
+- 印出「尚未設定後端 → 預設用本機資料夾」時，**照預設 `~/PosePlanner` 直接用即可**；
+  第一次入庫前順口告訴使用者庫會放在哪，想換位置或改用私有 DB 再幫他設定：
   ```bash
-  # 選 Google Drive：
-  python3 scripts/backend.py set --backend drive
-  # 選私有 DB（向使用者要 server 內網位址與 token）：
+  # 本機資料夾（使用者指定路徑）：
+  python3 scripts/backend.py set --backend local --path ~/Pictures/PosePlanner
+  # 私有 DB（向使用者要 server 內網位址與 token）：
   python3 scripts/backend.py set --backend selfhost \
       --base-url http://192.168.x.x:8000 --token <使用者的 token>
   ```
   > 私有 DB 有兩組 token：**入庫**要用「讀寫」token（`POSEPLANNER_TOKEN`）；只搜尋不入庫的人用
   > 「唯讀」token（`POSEPLANNER_READ_TOKEN`）。要入庫卻只拿到唯讀 token 時，`/images` 會回 401——
   > 遇到就請使用者改用讀寫 token。token 請勿在回覆裡明文印出。
-- 之後的「上傳」與「搜尋」步驟**依後端分流**（見下方各步驟的 🅐/🅑 標記）。私有 DB 的架站說明見 [server/README.md](server/README.md)。
+- 印出「不支援的後端 drive」：Google Drive 模式已移除，請使用者改選 local 或 selfhost；
+  舊 Drive 上的資料見下方「從舊版 Google Drive 遷移」。
+- 之後的「入庫 / 搜尋 / 刪除」步驟**依後端分流**（見下方各步驟的 🅐/🅑 標記）。
+  私有 DB 的架站說明見 [server/README.md](server/README.md)。
 
 > 看圖、產 description + tags 的流程**兩種後端完全一樣**；只有「資料落到哪」不同。
 
-## 🅐 架構（drive 模式）：純雲端、只上傳不下載
-
-這個 skill **完全在雲端沙箱（手機 / Desktop）運行**，庫存在使用者的 **Google Drive**。
-核心設計是**讓 token 成本與庫的大小脫鉤**：
-
-- **入庫（每天、便宜）**：看圖 → `pack` 成一個小 fragment（zip）→ 用 Drive 連接器上傳到
-  `PosePlanner/fragments/`。**永遠不下載整個庫**，每次成本 O(今天新增)。
-- **庫的真身 = 累積的 fragments**。Drive 上**只有** `fragments/` 這個 append-only 收件匣，
-  沒有一份要維護、要覆寫的 `library.db`。這剛好閃開「Drive 連接器只能新建、不能覆寫/刪除」。
-- **搜尋（偶爾、較貴）**：要查庫時，把 `fragments/*.zip` 拉下來，在沙箱 `compact` 成一份
-  **臨時** `library.db` 再查。查完即丟，不回傳。
-
-> ⚠️ **誠實的取捨：** 連接器沒有「部分讀取 SQLite」這種事——要在雲端搜尋，只能把資料整包
-> base64 抓下來。所以**入庫便宜、搜尋會把當下的 fragments 都下載**。入庫頻繁、搜尋偶爾，
-> 這個權衡通常划算；但庫變很大後搜尋會變重，屆時可手動清併過的舊 fragment。
-
-> ⚙️ **向量引擎需求**：庫的（選配）向量搜尋靠 `vendor/sqlite-vec/` 的 vec0，是 loadable
-> extension，需要 Python 的 sqlite3 支援 `enable_load_extension`。腳本會在需要時**自動
-> re-exec 到支援的 python3**；找不到會明確報錯。sqlite-vec 二進位已 vendored，**不需 pip 安裝**。
-
-## 開場準備（每次對話一次）
-
-雲端沙箱用完即焚，所以每次先把工作環境備好：
-
-1. 建工作目錄：`/tmp/poseplanner/`（圖暫存）、`/tmp/poseplanner/outbox/`（放打包好的 zip）。
-2. **裝 Pillow**（縮圖需要；沙箱是 Linux，沒有 macOS 的 `sips`）：`pip install pillow`。
-   沒裝的話 fragment 裡會沒有縮圖，之後搜尋就沒縮圖可看。
-3. 確認 Google Drive 連接器可用（上傳 fragment / 搜尋時下載 fragment 都靠它）。
-
-> 去重交給搜尋時的 `compact`（content_hash），所以入庫端**不需要**為了去重下載任何索引。
-> 同一張圖萬一不同天重複上傳也沒關係，合併成臨時庫時會自動略過。
+> ⚙️ **向量引擎需求（local）**：`library.db` 含 sqlite-vec 的 vec0 表，是 loadable extension，
+> 需要 Python 的 sqlite3 支援 `enable_load_extension`。macOS 內建 `/usr/bin/python3` 不支援，
+> 腳本會**自動 re-exec 到支援的 python3**（如 Homebrew 的）；找不到會明確報錯——照錯誤訊息請使用者
+> `brew install python` 或設 `POSEPLANNER_PYTHON`。sqlite-vec 二進位已 vendored，**不需 pip 安裝**。
+> 縮圖優先用 Pillow，沒裝時 macOS 會改用內建 `sips`。
 
 ## 社群貼文入庫（Instagram / Twitter-X / Facebook，免 API key）
 
@@ -115,7 +100,7 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
   **IG 的 caption 抓不到，請把使用者貼的那段文字用 `--caption "…"` 傳進去**（或自己填進骨架）。
 - 拿到骨架後，**照下面正常入庫流程的第 2 步親自看每一張圖**，把 `description` 改寫成真正的動作敘述、
   補上 `tags`（caption 只是輔助，標籤仍以你看到的畫面為準，別照抄貼文文案）。
-- 然後就跟手動加圖一樣：寫成 `_ingest.json` → `pack` → 上傳 fragment（第 3～5 步）。
+- 然後就跟手動加圖一樣：寫成 `_ingest.json` → 依後端入庫（第 3～5 步）。
 - 使用者只貼**文字沒網址**時：沒有可擷取的圖，請他改附圖片走一般入庫；caption 文字可作為敘述參考。
 
 > 後援：環境若裝了 `gallery-dl`，可加 `--gallery-dl`——IG 多圖 carousel / FB 貼文圖 / 自動
@@ -129,7 +114,8 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
 標籤的維度是固定的（保證一致性），維度底下的「值」可以成長。
 
 ### 2. 逐張看圖，產出 JSON
-針對使用者給的每一張圖，**親自看圖**，產出一筆物件：
+入庫需要**本機檔案路徑**（腳本要讀檔算 hash、複製原圖）。使用者只把圖貼在對話裡、你拿不到檔案路徑時，
+請他給圖所在的資料夾或檔案位置。針對使用者給的每一張圖，**親自看圖**，產出一筆物件：
 
 ```json
 {
@@ -165,49 +151,35 @@ python3 scripts/fetch_post.py "<FB貼文網址>" --gallery-dl --cookies-from-bro
 - 沒有可靠的創作者資訊就整段省略，不要亂填或臆測來源。`creators` 不在 taxonomy 約束內，是獨立的人物紀錄。
 
 ### 3. 寫 manifest
-把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`（drive 模式）
-或本機暫存夾（selfhost 模式）。圖先存好（manifest 裡 `image` 可用相對 manifest 的路徑或絕對路徑）。
+把所有圖的物件組成一個 JSON **陣列**，寫到 `/tmp/poseplanner/_ingest.json`。
+manifest 裡 `image` 可用相對 manifest 的路徑或絕對路徑（通常直接用使用者給的原圖絕對路徑）。
 
 > 🧠 **設計：Claude 產資料、腳本只寫檔。** **預設不自算向量**——語意理解由你（Claude）在
-> 搜尋時讀敘述完成。向量是選配：manifest 帶現成 `embedding`（384 維）會在 drive 模式被打進
-> fragment、selfhost 模式被寫進 Postgres 的 pgvector。
+> 搜尋時讀敘述完成。向量是選配：manifest 帶現成 `embedding`（384 維）會被寫進
+> local 的 sqlite-vec，或 selfhost 的 pgvector。
 
-### 4. 收場：依後端分流上傳
+### 4. 依後端入庫
 
-#### 🅐 drive 模式 — `pack` 成 fragment → 連接器上傳
+#### 🅐 local — 寫進本機資料夾圖庫
 ```bash
-python3 scripts/add_pose.py pack \
-    --manifest /tmp/poseplanner/_ingest.json \
-    --out /tmp/poseplanner/outbox/
+python3 scripts/add_pose.py ingest --manifest /tmp/poseplanner/_ingest.json
 ```
-產出 `…/outbox/frag-<時間戳>.zip`，內含 `manifest.json`（每筆帶 content_hash + 縮圖名）
-+ `thumbs/<hash>.jpg`。**原圖 bytes 不在裡面**——原圖留在你加圖的裝置即可。`pack` 完全
-**不碰任何庫**。然後用 Google Drive 連接器把這個 zip 上傳，`create_file`：
-- `parentId`：`PosePlanner/fragments/` 的 folderId（沒有就先 `create_file` 建資料夾鏈：
-  先建 `PosePlanner`，再在它底下建 `fragments`）
-- `title`：`frag-<時間戳>.zip`（沿用檔名）
-- `base64Content`：**這個 zip** 的 base64
-- `contentMimeType`：`application/zip`
-- `disableConversionToGoogleType`：**`true`** ← 不加 Drive 會嘗試轉檔弄壞它！
+content_hash 去重 → 原圖複製進 `<圖庫>/images/` → 產縮圖 → 寫 `library.db`。第一次會自動建庫。
+原圖已經複製進圖庫，使用者原本的檔案可以留著也可以刪。
 
-> ✅ **只上傳這一包，不下載任何東西、不上傳原圖、不上傳整個庫。** 每次成本是 O(今天新增)。
-> 連接器有單筆大小上限，原圖（3–8MB）會超限失敗，但一包 fragment 很小，穩過。
-> 上傳失敗就**明講**並保留 `/tmp/poseplanner/outbox/` 的 zip，別讓使用者以為存好了。
-
-#### 🅑 selfhost 模式 — 原圖直接送進私有 DB
-私有 server 有原圖接收服務，可以直接收原圖（不必只送縮圖）。把 manifest 餵給：
+#### 🅑 selfhost — 原圖直接送進私有 DB
 ```bash
 python3 scripts/backend.py ingest --manifest /tmp/poseplanner/_ingest.json
 ```
 它會逐張把**原圖 + description + tags** POST 到 server 的 `/images`，伺服器端
 content_hash 去重、產縮圖、寫 PostgreSQL。回報 `+N / 重複 / 失敗`。
-> 失敗（連不到 server、token 錯）就**據實回報**，別假裝存好了。已 `pack` 過的舊 zip
-> 也能補送：`python3 scripts/backend.py push --fragment <frag.zip>`。
+
+> 失敗（缺圖、連不到 server、token 錯）就**據實回報**，別假裝存好了。
 
 ### 5. 回報
-把 `pack` 印出的摘要轉述給使用者，並補充你的觀察，例如：
+把腳本印出的摘要轉述給使用者，並補充你的觀察，例如：
 > 今天 +12 張，新增角色：雷電將軍；新學到 tag：持薙刀、戰鬥姿。
-> 我注意到你最近偏好「逆光 × 慵懶」這個調性。（已上傳一包 fragment 到你的 Google Drive。）
+> 我注意到你最近偏好「逆光 × 慵懶」這個調性。
 
 如果有 `proposed` 新維度，主動問使用者是否要保留。
 
@@ -217,13 +189,38 @@ content_hash 去重、產縮圖、寫 PostgreSQL。回報 `+N / 重複 / 失敗`
 
 > 🔴 **搜尋的鐵則：回覆一定要看得到圖。**
 > 使用者搜尋是為了「看圖挑」，不是讀標籤。所以**每一次搜尋的最終回覆都必須把挑出的圖以縮圖
-> 渲染在對話裡**（Markdown `![](縮圖絕對路徑)` 的表格）——**絕不可以只回 tag / 文字描述**。
-> - drive 模式：搜尋**一定要先把 fragments 拉下來 `compact`**，縮圖才會落地、才有圖可貼（見下方步驟）。
+> 渲染在對話裡**（Markdown `![](縮圖)` 的表格）——**絕不可以只回 tag / 文字描述**。
 > - 流程固定：**先粗篩 → 你讀 description 做語意挑選 → 用 `--ids` 把選中的那幾張連縮圖一起印出來**。
 > - 縮圖欄若出現 `—`（缺縮圖），照實說明那張入庫時沒縮圖，別默默吞掉。
 
-### 🅑 selfhost 模式 — 直接打 server，不必重建
-私有 DB 一直在線，縮圖是 server URL（內網對話能直接渲染），不必 compact。流程：
+### 🅐 local — 直接查本機圖庫
+1. **粗篩候選**（這步給你看 description / tags，不是最終回覆）。
+   用 `--json` 拿機器可讀候選，方便你讀敘述做語意挑選：
+   ```bash
+   python3 scripts/search.py "想要回眸的帥氣站姿" --json
+   python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30 --json
+   ```
+   `QUERY` 以空白拆成多個關鍵字，對 description／tag 名稱／創作者名做 AND 模糊比對
+   （只是粗篩，真正的語意排序由你判斷）。全身照之類的「取景」查詢用 `--tag framing=全身`；
+   某角色的範例圖用 `--tag character=<角色>`（配合自然語言 QUERY 收斂）。
+
+2. **語意挑選 → 用 `--ids` 把選中的圖連縮圖印成表**（**這才是回給使用者的最終輸出**）：
+   你從候選裡讀 description、剔掉不貼近的、按貼近度排好，把選中的 `id` 用 `--ids` 傳回去，
+   search.py 會**保留你給的順序**吐一張含縮圖的 Markdown 表（縮圖 / 描述 / 標籤 / 訊號）：
+   ```bash
+   python3 scripts/search.py --ids 7,3,12,5 --table
+   ```
+   縮圖欄是圖庫裡的**本機絕對路徑**，整段貼進對話就會渲染。
+   **回覆務必含這張圖表**，再用一兩句說明你為什麼挑這些、淘汰了哪些。
+   > 想直接呈現粗篩結果不另做挑選時，也可以一步到位 `--table`（仍含縮圖）：
+   > `python3 scripts/search.py --tag framing=全身 --limit 12 --table`
+   > 但只要使用者是在「找特定感覺的圖」，請走上面的 `--json` → `--ids` 兩段式，回覆品質更好。
+
+> 進階：若庫裡有向量（入庫時 manifest 給過 `embedding`，或 `ingest --embed`），可加 `--knn` 走
+> sqlite-vec 向量最近鄰。一般情況用預設模式即可，語意交給你來挑。
+
+### 🅑 selfhost — 直接打 server
+私有 DB 一直在線，縮圖是 server URL（內網對話能直接渲染）。流程：
 ```bash
 # 1) 粗篩候選（讀敘述用）
 python3 scripts/backend.py search "回眸的帥氣站姿" --tag framing=半身 --json
@@ -233,50 +230,6 @@ python3 scripts/backend.py search "回眸的帥氣站姿" --tag framing=半身 -
 server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description 做語意排序、剔掉不貼近的**。
 **最終回覆一樣要含縮圖**（見上面的「搜尋鐵則」）：`--table` 的縮圖欄是帶 token 的 server URL，
 整段貼進對話就會渲染。別只回 tag/文字——挑完後把保留的那幾列連縮圖一起貼，並說明取捨。
-
-### 🅐 drive 模式 — 需要時才重建
-因為庫的真身是 Drive 上累積的 fragments，**先把它們拉下來、在沙箱合併成一份臨時庫，再查**：
-
-1. **下載 fragments**：用 Drive 連接器列出 `PosePlanner/fragments/` 底下所有 `*.zip`，
-   逐個 `download_file_content` 取 base64 → 存到 `/tmp/poseplanner/fragments/`。
-   （這步會把目前所有 fragment 抓下來，是搜尋較貴的原因。）
-2. **合併成臨時庫**：
-   ```bash
-   python3 scripts/add_pose.py compact \
-       --fragments /tmp/poseplanner/fragments \
-       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   ```
-   `compact` 以 content_hash 去重（重複的圖只入一次），縮圖落地到 `/tmp/poseplanner/images/thumbs/`。
-3. **粗篩候選**（這步給你看 description / tags，不是最終回覆）。
-   用 `--json` 拿機器可讀候選，方便你讀敘述做語意挑選：
-   ```bash
-   python3 scripts/search.py "想要回眸的帥氣站姿" --json \
-       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   python3 scripts/search.py --tag ip=鬼滅之刃 --tag framing=半身 --limit 30 --json \
-       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   ```
-   `QUERY` 以空白拆成多個關鍵字，對 description 做 AND 模糊比對（只是粗篩，真正的語意排序由你判斷）。
-   全身照之類的「取景」查詢用 `--tag framing=全身`；某角色的範例圖用 `--tag character=<角色>`
-   （配合自然語言 QUERY 收斂）。
-
-4. **語意挑選 → 用 `--ids` 把選中的圖連縮圖印成表**（**這才是回給使用者的最終輸出**）：
-   你從候選裡讀 description、剔掉不貼近的、按貼近度排好，把選中的 `id` 用 `--ids` 傳回去，
-   search.py 會**保留你給的順序**吐一張含縮圖的 Markdown 表（縮圖 / 描述 / 標籤 / 訊號）：
-   ```bash
-   python3 scripts/search.py --ids 7,3,12,5 --table \
-       --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-   ```
-   把這張表整段貼進對話，縮圖（絕對路徑圖片）就會渲染出來。
-   **回覆務必含這張圖表**，再用一兩句說明你為什麼挑這些、淘汰了哪些。
-   > 想直接呈現粗篩結果不另做挑選時，也可以一步到位 `--table`（仍含縮圖）：
-   > `python3 scripts/search.py --tag framing=全身 --limit 12 --table --db … --data …`
-   > 但只要使用者是在「找特定感覺的圖」，請走上面的 `--json` → `--ids` 兩段式，回覆品質更好。
-
-> 這份 `/tmp/poseplanner/library.db` 是**臨時**的、查完即丟——**不要**回傳到 Drive。
-> Drive 上永遠只維護 `fragments/`。
-
-> 進階：若 fragment 裡帶了向量（manifest 給過 `embedding`），可加 `--knn` 走 sqlite-vec
-> 向量最近鄰。一般情況用預設模式即可，語意交給你來挑。
 
 ## 刪除（從庫移除圖）
 
@@ -290,32 +243,18 @@ server 回的是 **tag + 關鍵字粗篩候選**；**你仍要讀 description �
 >    使用者沒明確答應、或語氣含糊（「好像不太喜歡」）就**停在這裡問清楚**，不要自己決定刪。
 > 4. **才執行**：得到同意後，重跑同一條指令並加 `--confirm`。
 
-### 🅐 drive 模式 — 產一個 tombstone fragment 上傳
-drive 模式的庫是 Drive 上 append-only 的 fragments，連接器**不能刪檔**，所以「刪一張圖」=
-上傳一個只記 content_hash 的小 **tombstone**；之後搜尋（`compact`）重建臨時庫時就會自動略過它們。
-
+### 🅐 local — 直接從本機圖庫刪
+id 是穩定的，直接刪即可（連帶清 tags/creators/向量 + 圖庫裡的原圖與縮圖檔）：
 ```bash
-# 前提：剛剛搜尋時已 compact 出 /tmp/poseplanner/library.db，用同一個 --db 對照 id。
-# 1) dry-run：只預覽，不產生任何東西
-python3 scripts/add_pose.py forget --ids 3,7 \
-    --db /tmp/poseplanner/library.db --data /tmp/poseplanner
-# 2) 把預覽的圖渲染給使用者、取得明確同意後，才加 --confirm 產出 tombstone
-python3 scripts/add_pose.py forget --ids 3,7 --confirm \
-    --out /tmp/poseplanner/outbox/ \
-    --db /tmp/poseplanner/library.db --data /tmp/poseplanner
+# 1) dry-run 預覽
+python3 scripts/add_pose.py delete --ids 3,7
+# 2) 取得使用者明確同意後才加 --confirm
+python3 scripts/add_pose.py delete --ids 3,7 --confirm
 ```
 - `--ids` 用搜尋表上的 `#`；也可用 `--hash <content_hash 或前綴>` 直接指定。
-- ⚠ id 是**那一次 compact** 出來的臨時編號，下次重建會變——所以**刪除要用「同一個 library.db」**，
-  別拿舊 id 去刪。找不到的 id/hash 會明確列出來，別硬刪。
-- `--confirm` 會在 `outbox/` 產出 `tomb-<時間戳>.zip`。**把它跟一般 fragment 一樣上傳到 Drive 的
-  `PosePlanner/fragments/`**（`create_file`，`contentMimeType=application/zip`，
-  `disableConversionToGoogleType=true`）。上傳成功後那幾張在日後搜尋就不再出現。
-- 上傳失敗就**明講**、保留該 zip，別讓使用者以為刪掉了。
+- 找不到的 id/hash 會明確列出來，別硬刪。刪除無法復原（除非使用者自己有備份圖庫資料夾）。
 
-> tombstone 採「刪除優先（tombstone wins）」：只要有 tombstone 記到某張的 hash，`compact` 一律不收它。
-> 萬一之後想救回某張（罕見），請使用者到 Drive 的 `fragments/` 手動把那個 `tomb-*.zip` 刪掉即可。
-
-### 🅑 selfhost 模式 — 直接打 server 刪
+### 🅑 selfhost — 直接打 server 刪
 私有 DB 一直在線、id 是穩定的，直接刪即可（連帶清 tags/creators + 磁碟原圖縮圖）：
 ```bash
 # 1) dry-run 預覽
@@ -356,7 +295,8 @@ python3 scripts/backend.py delete --ids 3,7 --confirm
 - **selfhost**：原圖在 server，用帶**唯讀 token** 的 URL 抓
   `<base_url>/images/<hash>.jpg?t=<read_token>`（縮圖用 `/thumbs/<hash>.jpg?t=…`）。
   hash 取自 `backend.py search --json` 的 `image_path`。
-- **drive**：搜尋時 `compact` 出的縮圖已落地在 `/tmp/poseplanner/images/thumbs/`，直接複製。
+- **local**：原圖就在圖庫裡，`search.py --json` 的 `image_path` 是相對圖庫資料夾的路徑
+  （`backend.py status` 看圖庫位置），直接複製。
 
 > ⚠ **已知坑（selfhost）**：server 端 `--tag` 過濾目前可能未生效、且回傳有筆數上限（~100）。
 > 要「依 tag 完整撈某類」時，改成 **抓回來在本地用 Python 過濾 `tags`**（必要時用關鍵字搜尋補抓較舊的），
@@ -382,20 +322,34 @@ python3 scripts/make_plan.py --plan plan.json --pdf 拍攝計劃.pdf --embed --m
 - 渲染後可用 `pdftoppm -png` 抽幾頁自我檢查版面有沒有溢出（封面內容太多會把圖擠到頁底裁掉——
   就把區塊拆到下一頁）。
 
+## 從舊版 Google Drive 遷移
+
+舊版的 Google Drive 模式已移除。使用者若在 Drive 的 `PosePlanner/fragments/` 還有資料：
+
+1. 請使用者從 Drive 網頁把 `PosePlanner/fragments/` 整個資料夾下載下來（`frag-*.zip`、`tomb-*.zip`），
+   例如放在 `~/Downloads/fragments/`。
+2. 依後端匯入（content_hash 去重、可重跑；`tomb-*.zip` 裡記的刪除會一併套用）：
+   ```bash
+   # local：
+   python3 scripts/add_pose.py compact --fragments ~/Downloads/fragments
+   # selfhost：逐個 zip 送進 server
+   for f in ~/Downloads/fragments/*.zip; do python3 scripts/backend.py push --fragment "$f"; done
+   ```
+   > selfhost 要先送 `frag-*.zip` 再送 `tomb-*.zip`，刪除才會蓋過新增（上面的 glob 剛好依檔名排序）。
+3. ⚠ fragment 只帶縮圖、**不含原圖**，所以遷移過來的圖只有縮圖可看；需要原圖時請使用者重新入庫那幾張。
+
 ## 注意
 - 不要重複入庫：以 content_hash 去重，但你也別把同一張圖在 manifest 裡列兩次。
 - 看不清楚或不是 cosplay 的圖，先問使用者，不要硬塞標籤。
-- 庫很大後搜尋下載會變重；可請使用者把「已確認併進過的舊 fragment」在 Drive 手動清掉
-  （連接器不能代刪）。content_hash 去重保證重抓也不會重複，所以清舊包很安全。
+- 本機圖庫就是一個資料夾：備份 / 搬家 / 分享都是整個資料夾複製即可（`library.db` 是單一檔，無 WAL 旁檔）。
 
 ## 相關腳本
 - `scripts/backend.py`：**儲存後端選擇與私有 DB 客戶端**（純標準庫）。`status` / `setup` /
-  `set`（drive｜selfhost）/ `ingest`（selfhost：原圖逐張送 /images）/ `push`（送 fragment zip）/
+  `set`（local｜selfhost）/ `ingest`（selfhost：原圖逐張送 /images）/ `push`（遷移：送舊 fragment zip）/
   `search`（打 server /search）/ `delete`（selfhost：刪 pose，預設 dry-run、`--confirm` 才刪）/
-  `image`（單張）。第一次執行先用它選後端。**已實作**。
-- `scripts/add_pose.py`：核心。`pack`（看圖後打包 fragment，不寫庫）/ `compact`（搜尋時把
-  fragments 合併成臨時庫，去重；會套用 tombstone 刪除）/ `forget`（drive：把選中的圖打包成
-  tombstone，預設 dry-run、`--confirm` 才產出）/ `stats` / `init` / `ingest` / `add`（後二者本機測試用）。**已實作**。
+  `image`（單張）。**已實作**。
+- `scripts/add_pose.py`：本機圖庫核心。`ingest`（manifest 入庫）/ `add`（單張）/ `delete`（刪 pose，
+  預設 dry-run、`--confirm` 才刪）/ `compact`（遷移：匯入舊 Drive fragments）/ `stats` / `init`。**已實作**。
 - `scripts/fetch_post.py`：從 IG / Twitter-X / Facebook 貼文擷取圖片 + caption（免 API key；
   Twitter/IG 純標準庫，FB 走 gallery-dl + 瀏覽器 cookies）。**已實作**。
 - `scripts/search.py`：tag 篩選 + Claude 語意挑選（選配向量 KNN）；`--json` 拿候選、

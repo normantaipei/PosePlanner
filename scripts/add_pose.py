@@ -28,6 +28,11 @@
 其他：
      python3 scripts/add_pose.py init          # 只建庫 + seed
      python3 scripts/add_pose.py stats         # 看目前庫狀態
+     python3 scripts/add_pose.py delete --ids 3,7 [--confirm]   # 刪圖（預設 dry-run）
+     python3 scripts/add_pose.py compact --fragments <資料夾>   # 匯入舊版 Drive fragments
+
+庫放在「本機資料夾圖庫」（backend.py 的 local 後端，預設 ~/PosePlanner）：
+     <圖庫>/library.db、<圖庫>/images/、<圖庫>/images/thumbs/
 
 embedding 是選配：裝了 fastembed 才會算並寫入 pose_embeddings，沒裝照樣入庫。
 """
@@ -45,21 +50,21 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
+import backend  # 讀 data/config.json 的 local 圖庫位置（同目錄，純標準庫）
 import vecdb  # sqlite-vec 載入層（同目錄）
 
 # ── 路徑 ──────────────────────────────────────────────────────────
 # 本檔在 <root>/scripts/；taxonomy 與 schema 跟著 skill 走（唯讀資源）。
-# 但 db 與 data（圖）位置「可被覆寫」——雲端持久化時，Claude 會先把 Drive 上的
-# library.db 下載到沙箱（例如 /tmp/poseplanner/），再用 --db / --data 指過來。
-# 覆寫優先序：CLI 旗標 > 環境變數 > 預設（skill 內的 data/）。
+# db 與 data（圖）放在「本機資料夾圖庫」，位置可覆寫，優先序：
+#   CLI 旗標（--db / --data）> 環境變數 > data/config.json 的 local.path > 預設 ~/PosePlanner
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "scripts" / "schema.sql"
 TAXONOMY_PATH = ROOT / "taxonomy.yaml"
 
-DATA_DIR = Path(os.environ.get("POSEPLANNER_DATA", str(ROOT / "data")))
+DATA_DIR = Path(os.environ["POSEPLANNER_DATA"]) if os.environ.get("POSEPLANNER_DATA") \
+    else backend.library_dir()
 DB_PATH = Path(os.environ.get("POSEPLANNER_DB", str(DATA_DIR / "library.db")))
 IMAGES_DIR = DATA_DIR / "images"
 THUMBS_DIR = DATA_DIR / "images" / "thumbs"
@@ -91,9 +96,8 @@ EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 # 創作者沒指定角色時的預設 role；常見值：model / photographer / retoucher…
 DEFAULT_CREATOR_ROLE = "creator"
 
-# Tombstone（刪除）fragment 的標記。drive 模式的庫是 Drive 上 append-only 的 fragments，
-# 連接器只能新建、不能刪檔，所以「刪一張圖」= 上傳一個只記 content_hash 的小 tombstone zip；
-# compact 重建臨時庫時看到 tombstone 就把那些 content_hash 的圖移除（tombstone wins）。
+# 舊版 Google Drive 模式的 tombstone（刪除）fragment 標記。compact 匯入舊 fragments 時，
+# 看到 tombstone 就把那些 content_hash 的圖排除（tombstone wins），避免已刪的圖復活。
 # 正常 fragment 的 manifest 是「陣列」，tombstone 的 manifest 是帶這個 op 的「物件」，不會撞型。
 TOMBSTONE_OP = "delete"
 
@@ -160,11 +164,7 @@ def connect() -> sqlite3.Connection:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         seed_tags(conn)
         conn.commit()
-        try:
-            shown = DB_PATH.relative_to(ROOT)
-        except ValueError:
-            shown = DB_PATH  # db 在 skill 之外（雲端持久化的沙箱副本）
-        print(f"  建立新庫：{shown}")
+        print(f"  建立新庫：{DB_PATH}")
     else:
         _migrate(conn)  # 既有庫補新欄位（如 thumb_w/h）
     return conn
@@ -572,97 +572,11 @@ def build_summary(conn: sqlite3.Connection, st: Stats) -> str:
     return "；".join(parts) + "。"
 
 
-# ── Fragment：「只上傳不下載」的單位 ───────────────────────────────
-# 雲端（手機 / Desktop）流程：pack 把「一份正常 manifest（含原圖路徑）」就地轉成
-# 一個**自包含、不含原圖 bytes** 的小 fragment（zip）：
-#     frag-<ts>.zip
-#       ├ manifest.json   每筆帶 content_hash + thumbnail 檔名（給之後 compact 回放）
-#       └ thumbs/<hash>.jpg
-# pack **完全不碰 library.db**——pack 完只要把這一個 zip 上傳到 Drive 的
-# fragments/ 即可（連接器只傳這一小包，永不下載整個庫）。
-#
-# 搜尋時：把 Drive 上累積的 fragment zip 全下載回沙箱，再用 compact 一次回放併成一份
-# **臨時** library.db（content_hash 去重）來查；查完即丟，不回傳 Drive。
-def cmd_pack(args) -> None:
-    manifest_path = Path(args.manifest).expanduser()
-    if not manifest_path.exists():
-        raise SystemExit(f"找不到 manifest：{manifest_path}")
-    entries = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if isinstance(entries, dict):
-        entries = entries.get("poses") or entries.get("items") or [entries]
-    if not isinstance(entries, list):
-        raise SystemExit("manifest 應是 JSON 陣列。")
-    base = manifest_path.parent
-
-    out_arg = Path(args.out).expanduser()
-    if out_arg.suffix.lower() == ".zip":
-        out_zip = out_arg
-    else:  # 給的是資料夾 → 自動命名 frag-<時間戳>.zip
-        out_arg.mkdir(parents=True, exist_ok=True)
-        out_zip = out_arg / f"frag-{datetime.now():%Y%m%dT%H%M%S}.zip"
-    out_zip.parent.mkdir(parents=True, exist_ok=True)
-
-    resolved: list[dict] = []
-    n_thumb = 0
-    with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td)
-        thumb_files: list[tuple[str, Path]] = []
-        for entry in entries:
-            img_field = entry.get("image")
-            if not img_field:
-                print("  ✗ 略過：缺 image 欄位"); continue
-            src = Path(img_field).expanduser()
-            if not src.is_absolute():
-                src = base / src
-            if not src.exists():
-                print(f"  ✗ 找不到圖：{img_field}"); continue
-            description = (entry.get("description") or "").strip()
-            tags = entry.get("tags") or []
-            if not description or not tags:
-                print(f"  ✗ 略過 {src.name}：description / tags 不可空"); continue
-
-            content_hash = sha256_file(src)
-            ext = src.suffix.lower() or ".jpg"
-            thumb_name = None
-            thumb_w = thumb_h = None
-            thumb_dst = tmp / f"{content_hash}.jpg"
-            if make_thumbnail(src, thumb_dst):
-                thumb_name = f"{content_hash}.jpg"
-                thumb_files.append((thumb_name, thumb_dst))
-                thumb_w, thumb_h = read_dims(thumb_dst)
-                n_thumb += 1
-            else:
-                print(f"    ⚠ {src.name} 沒產出縮圖（缺 Pillow？雲端請先 pip install pillow）")
-
-            resolved.append({
-                "content_hash": content_hash,
-                "description": description,
-                "tags": tags,
-                "creators": entry.get("creators") or [],
-                "source": entry.get("source") or src.name,
-                "rating": entry.get("rating"),
-                "favorite": bool(entry.get("favorite")),
-                "image_ext": ext,
-                "thumbnail": thumb_name,
-                "thumb_w": thumb_w,
-                "thumb_h": thumb_h,
-                "embedding": entry.get("embedding"),
-                "embedding_model": entry.get("embedding_model"),
-            })
-
-        if not resolved:
-            raise SystemExit("沒有任何有效筆可打包（檢查圖路徑 / description / tags）。")
-
-        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("manifest.json", json.dumps(resolved, ensure_ascii=False, indent=2))
-            for name, path in thumb_files:
-                z.write(path, f"thumbs/{name}")
-
-    size_kb = out_zip.stat().st_size / 1024
-    print(f"\n打包完成：{len(resolved)} 筆 → {out_zip}（縮圖 {n_thumb}，{size_kb:.0f} KB）")
-    print("  ↳ 雲端：把這「一個 zip」上傳到 Drive 的 PosePlanner/fragments/ 即可（不下載整個庫）。")
-
-
+# ── 遷移：匯入舊版 Google Drive 模式的 fragments ───────────────────
+# 舊版把每批入庫打包成 fragment zip（manifest.json + thumbs/<hash>.jpg，不含原圖）
+# 累積在 Drive 的 PosePlanner/fragments/。Drive 模式已移除；要把那些資料搬進本機
+# 資料夾圖庫，就把 fragments/*.zip 從 Drive 網頁下載下來，用 compact 一次回放進 library.db
+# （content_hash 去重、會套用 tombstone 刪除、可重跑）。原圖不在 fragment 裡，只有縮圖。
 def _store_thumb_from(content_hash: str, src_thumb: Path) -> str | None:
     """compact 用：把 fragment 內的縮圖複製進 data/images/thumbs/，回傳相對路徑。"""
     if not src_thumb.exists():
@@ -734,7 +648,7 @@ def compact_one(conn: sqlite3.Connection, entry: dict, dims: dict, frag_dir: Pat
 
 
 def cmd_compact(args) -> None:
-    """把一批 fragment（zip 或解開的資料夾）回放併進 library.db。content_hash 去重、可重跑。"""
+    """遷移用：把一批舊 Drive fragment（zip 或解開的資料夾）回放併進 library.db。content_hash 去重、可重跑。"""
     frag_root = Path(args.fragments).expanduser()
     if not frag_root.exists():
         raise SystemExit(f"找不到 fragments：{frag_root}")
@@ -794,7 +708,7 @@ def cmd_compact(args) -> None:
                     except Exception as e:
                         print(f"  ✗ 失敗：{e}"); st.errors += 1
 
-            # 保險：若 db 是重用的（非用完即焚），把已存在卻被 tombstone 的列也刪掉。
+            # 圖庫裡已存在卻被 tombstone 的列也刪掉。
             # CASCADE + trg_poses_del_vec 會連帶清掉 pose_tags / pose_creators / 向量。
             for h in dead:
                 conn.execute("DELETE FROM poses WHERE content_hash=?", (h,))
@@ -810,11 +724,11 @@ def cmd_compact(args) -> None:
     print("\n" + summary)
 
 
-# ── 刪除（drive 模式）：產一個 tombstone fragment ───────────────────
-# 兩段式安全閥：預設只「列出將刪什麼」(dry-run)，不寫任何檔；要真的產 tombstone
+# ── 刪除：從本機資料夾圖庫移除 ─────────────────────────────────────
+# 兩段式安全閥：預設只「列出將刪什麼」(dry-run)，不動任何資料；要真的刪
 # 必須再加 --confirm。SKILL 流程要求 Claude 先把這些圖渲染給使用者看、明確同意後才 --confirm。
 def _resolve_targets(conn, ids: list[int], hashes: list[str]) -> tuple[list[dict], list[str]]:
-    """把使用者點的 id / hash 對應回臨時庫裡的 pose（含 content_hash + 敘述）。
+    """把使用者點的 id / hash 對應回圖庫裡的 pose（含 content_hash + 敘述）。
     回傳 (targets, missing)；targets 每筆 {id?, content_hash, description, tags}。"""
     targets: list[dict] = []
     seen: set[str] = set()
@@ -867,14 +781,11 @@ def _tags_of(conn, pose_id: int) -> list[str]:
     ]
 
 
-def cmd_forget(args) -> None:
-    """drive 模式刪除：把選中的圖打包成一個 tombstone fragment（上傳到 Drive fragments/ 後，
-    日後 compact 重建臨時庫就不會再出現它們）。預設 dry-run，--confirm 才真的產出 zip。"""
+def cmd_delete(args) -> None:
+    """刪一或多張 pose：DB 列（連帶 tags/creators/向量）+ 圖庫裡的原圖與縮圖。
+    預設 dry-run，--confirm 才真的刪。"""
     if not DB_PATH.exists():
-        raise SystemExit(
-            "找不到臨時庫，無法對照要刪哪幾張。請先照搜尋流程 compact 出 library.db，"
-            "用同一個 --db 指過來。"
-        )
+        raise SystemExit(f"找不到圖庫：{DB_PATH}")
     ids: list[int] = []
     for chunk in args.ids or []:
         for tok in chunk.replace("，", ",").split(","):
@@ -892,49 +803,42 @@ def cmd_forget(args) -> None:
     conn = connect()
     try:
         targets, missing = _resolve_targets(conn, ids, hashes)
+        if missing:
+            print("⚠ 這些在圖庫裡找不到（id/hash 打錯，或早已刪除）：" + "、".join(missing))
+        if not targets:
+            raise SystemExit("沒有可刪的目標。")
+
+        print(f"\n將刪除 {len(targets)} 張（本機圖庫：原圖 + 縮圖 + metadata 永久移除）：")
+        for t in targets:
+            print(f"  • #{t['id']}  {t['content_hash'][:12]}  {t['description'][:40]}")
+            if t["tags"]:
+                print(f"      tags: {'、'.join(tg.split(':', 1)[-1] for tg in t['tags'])}")
+
+        if not args.confirm:
+            print("\n— 這是預覽（dry-run），還沒刪任何東西。")
+            print("  請先把上面這些圖渲染給使用者確認；得到明確同意後，再加 --confirm 重跑這條指令。")
+            return
+
+        files: list[Path] = []
+        for t in targets:
+            row = conn.execute(
+                "SELECT image_path, thumbnail_path FROM poses WHERE id=?", (t["id"],)
+            ).fetchone()
+            files += [DATA_DIR / rel for rel in row if rel]
+            # CASCADE + trg_poses_del_vec 會連帶清掉 pose_tags / pose_creators / 向量。
+            conn.execute("DELETE FROM poses WHERE id=?", (t["id"],))
+        conn.commit()
     finally:
         conn.close()
 
-    if missing:
-        print("⚠ 這些在臨時庫裡找不到（id 可能來自別次 compact，或 hash 打錯）：" + "、".join(missing))
-    if not targets:
-        raise SystemExit("沒有可刪的目標——請確認 id/hash 來自『這次搜尋』compact 出的同一個庫。")
-
-    print(f"\n將刪除 {len(targets)} 張（drive：產 tombstone，日後搜尋就不再出現）：")
+    for f in files:
+        try:
+            f.unlink(missing_ok=True)
+        except OSError as e:
+            print(f"  ⚠ 刪檔失敗：{f}（{e}）")
     for t in targets:
-        print(f"  • #{t['id']}  {t['content_hash'][:12]}  {t['description'][:40]}")
-        if t["tags"]:
-            print(f"      tags: {'、'.join(tg.split(':', 1)[-1] for tg in t['tags'])}")
-
-    if not args.confirm:
-        print("\n— 這是預覽（dry-run），還沒有刪任何東西，也還沒產生 tombstone。")
-        print("  請先把上面這些圖渲染給使用者確認；得到明確同意後，再加 --confirm 重跑這條指令。")
-        return
-
-    if not args.out:
-        raise SystemExit("--confirm 需要 --out 指定 tombstone 輸出路徑（.zip 或資料夾）。")
-    out_arg = Path(args.out).expanduser()
-    if out_arg.suffix.lower() == ".zip":
-        out_zip = out_arg
-    else:
-        out_arg.mkdir(parents=True, exist_ok=True)
-        out_zip = out_arg / f"tomb-{datetime.now():%Y%m%dT%H%M%S}.zip"
-    out_zip.parent.mkdir(parents=True, exist_ok=True)
-
-    manifest = {
-        "poseplanner_op": TOMBSTONE_OP,
-        "content_hashes": [t["content_hash"] for t in targets],
-        "note": args.note or f"刪除 {len(targets)} 張（經使用者同意）",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-
-    size_kb = out_zip.stat().st_size / 1024
-    print(f"\n✓ 已產生 tombstone：{out_zip}（{len(targets)} 筆，{size_kb:.1f} KB）")
-    print("  ↳ 把這個 zip 跟一般 fragment 一樣上傳到 Drive 的 PosePlanner/fragments/")
-    print("    （create_file，contentMimeType=application/zip，disableConversionToGoogleType=true）。")
-    print("  上傳成功後，這幾張圖在日後的搜尋（compact）就不會再出現。")
+        print(f"  ✓ 已刪 #{t['id']}（{t['content_hash'][:8]}）")
+    print(f"\n刪除完成（本機圖庫）：{len(targets)} 張。")
 
 
 def cmd_init(args) -> None:
@@ -967,11 +871,11 @@ def cmd_stats(args) -> None:
 def main() -> None:
     vecdb.ensure_capable_interpreter()  # 必要時 re-exec 到支援 load_extension 的 python3
     p = argparse.ArgumentParser(description="PosePlanner 圖片入庫")
-    # 路徑覆寫可放在子指令「前或後」都行（雲端持久化時把 db/data 指到沙箱副本）。
+    # 路徑覆寫可放在子指令「前或後」都行（平常不必給，預設讀 config 的圖庫資料夾）。
     p.add_argument("--db", default=None,
-                   help="library.db 路徑（預設 data/library.db；亦可用環境變數 POSEPLANNER_DB）")
+                   help="library.db 路徑（預設 <圖庫>/library.db；亦可用環境變數 POSEPLANNER_DB）")
     p.add_argument("--data", default=None,
-                   help="資料目錄，圖存這裡（預設 ./data；亦可用 POSEPLANNER_DATA）")
+                   help="圖庫資料夾（預設 config 的 local.path 或 ~/PosePlanner；亦可用 POSEPLANNER_DATA）")
 
     # 同樣兩個旗標也掛到各子指令上；未提供時用 SUPPRESS 以免蓋掉前置值
     parent = argparse.ArgumentParser(add_help=False)
@@ -999,31 +903,21 @@ def main() -> None:
                     help="用本地 fastembed 算向量寫進 vec0（選配）")
     pa.set_defaults(func=cmd_add)
 
-    pp = sub.add_parser("pack", parents=[parent],
-                        help="把 manifest+圖打包成可上傳的 fragment zip（不寫庫；雲端/手機用）")
-    pp.add_argument("--manifest", required=True)
-    pp.add_argument("--out", required=True,
-                    help="輸出 .zip 路徑，或一個資料夾（會自動命名 frag-<時間戳>.zip）")
-    pp.set_defaults(func=cmd_pack)
-
     pcc = sub.add_parser("compact", parents=[parent],
-                         help="把一批 fragment（zip/資料夾）回放併進 library.db（去重；本機用）")
+                         help="遷移用：把舊版 Google Drive 的 fragments（zip/資料夾）匯入圖庫（去重）")
     pcc.add_argument("--fragments", required=True,
                      help="含若干 fragment 的根目錄或單一 zip（遞迴找 *.zip / manifest.json）")
     pcc.set_defaults(func=cmd_compact)
 
-    pf = sub.add_parser("forget", parents=[parent],
-                        help="drive 模式刪除：把選中的圖打包成 tombstone（預設 dry-run，--confirm 才產出）")
-    pf.add_argument("--ids", action="append",
-                    help="要刪的 pose id（搜尋表上的 #，逗號分隔，可重複）")
-    pf.add_argument("--hash", action="append",
-                    help="直接指定 content_hash（可給前綴；逗號分隔，可重複）")
-    pf.add_argument("--out", default=None,
-                    help="tombstone .zip 路徑或輸出資料夾（--confirm 時必填；自動命名 tomb-<時間戳>.zip）")
-    pf.add_argument("--note", help="這次刪除的備註，會寫進 tombstone")
-    pf.add_argument("--confirm", action="store_true",
-                    help="確認刪除：實際產出 tombstone zip（沒給就只做 dry-run 預覽）")
-    pf.set_defaults(func=cmd_forget)
+    pdel = sub.add_parser("delete", parents=[parent],
+                          help="刪一或多張 pose（預設 dry-run，--confirm 才刪）")
+    pdel.add_argument("--ids", action="append",
+                      help="要刪的 pose id（搜尋表上的 #，逗號分隔，可重複）")
+    pdel.add_argument("--hash", action="append",
+                      help="直接指定 content_hash（可給前綴；逗號分隔，可重複）")
+    pdel.add_argument("--confirm", action="store_true",
+                      help="確認刪除：實際刪除（沒給就只做 dry-run 預覽）")
+    pdel.set_defaults(func=cmd_delete)
 
     sub.add_parser("init", parents=[parent], help="建庫 + seed").set_defaults(func=cmd_init)
     sub.add_parser("stats", parents=[parent], help="看庫狀態").set_defaults(func=cmd_stats)
