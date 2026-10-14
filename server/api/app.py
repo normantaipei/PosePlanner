@@ -571,13 +571,18 @@ def delete_pose(pose_id: int, _: None = Depends(require_write_lan)) -> JSONRespo
     return JSONResponse({"id": info["id"], "content_hash": info["content_hash"], "deleted": True})
 
 
+FEED_NEWEST = 5  # 帶 seed 的 feed：最新入庫的前幾張照時間排（方便確認剛匯入的圖），其餘亂數
+
+
 @app.get("/search")
 @limiter.limit(SEARCH_RATE)
 def search(request: Request, q: str = "", tag: list[str] | None = None, limit: int = 20, offset: int = 0,
-          _: None = Depends(require_read)) -> JSONResponse:
+          seed: str | None = None, _: None = Depends(require_read)) -> JSONResponse:
     """tag（category=name，可多個 AND）+ 關鍵字（對 description 做 AND LIKE）粗篩候選。
     語意排序由 Claude 讀 description 完成——和 SQLite 版 search.py 同設計。
-    offset 供前端 feed 無限捲動分頁用（從第 offset 筆之後再取 limit 筆）。"""
+    offset 供前端 feed 無限捲動分頁用（從第 offset 筆之後再取 limit 筆）。
+    seed（前端 feed 用）：給了就改成「最新入庫的前 FEED_NEWEST 張照時間排，其餘依 seed 洗牌」；
+    同一 seed 排序固定，分頁才不會重複/漏圖。不給則維持原本排序（給入庫工具/Claude 用）。"""
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
     tag = tag or []
@@ -616,8 +621,17 @@ def search(request: Request, q: str = "", tag: list[str] | None = None, limit: i
            "p.description, p.favorite, p.rating FROM poses p")
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += (" ORDER BY p.favorite DESC, p.rating IS NULL, p.rating DESC, p.created_at DESC "
-            "LIMIT %s OFFSET %s")
+    if seed:
+        # 先依入庫時間編號，前 N 張保持時間序，其餘用 md5(id+seed) 當穩定的亂數鍵。
+        sql = (f"SELECT id, image_path, thumbnail_path, thumb_w, thumb_h, description, favorite, rating "
+               f"FROM (SELECT f.*, ROW_NUMBER() OVER (ORDER BY f.created_at DESC, f.id DESC) AS rn "
+               f"FROM ({sql.replace('p.rating FROM', 'p.rating, p.created_at FROM', 1)}) f) r "
+               f"ORDER BY LEAST(rn, %s + 1), md5(id::text || %s) "
+               f"LIMIT %s OFFSET %s")
+        params += [FEED_NEWEST, seed[:64]]
+    else:
+        sql += (" ORDER BY p.favorite DESC, p.rating IS NULL, p.rating DESC, p.created_at DESC "
+                "LIMIT %s OFFSET %s")
     params.append(limit)
     params.append(offset)
 

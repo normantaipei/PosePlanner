@@ -23,6 +23,9 @@ export function useFeed() {
   const stats = ref<Stats | null>(null)
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  // 洗牌種子：每次重新載入 feed 換一個（前 5 張新圖固定，後面換一批亂數），
+  // 分頁期間不變，後端才能給出一致順序、不重複不漏圖。
+  let seed = newSeed()
 
   const feedTitle = computed(() => {
     if (activeTag.value) return '標籤：' + activeTag.value.split('=').slice(1).join('=')
@@ -43,7 +46,7 @@ export function useFeed() {
     if (loading.value || done.value) return
     loading.value = true
     try {
-      const params: Record<string, string | number> = { limit: PAGE, offset: offset.value }
+      const params: Record<string, string | number> = { limit: PAGE, offset: offset.value, seed }
       if (q.value.trim()) params.q = q.value.trim()
       if (activeTag.value) params.tag = activeTag.value
       const items = await $fetch<RawPose[]>('/api/search', { params })
@@ -74,6 +77,7 @@ export function useFeed() {
   }
 
   function resetAndLoad() {
+    seed = newSeed()
     posts.value = []
     offset.value = 0
     done.value = false
@@ -133,4 +137,8 @@ export function useFeed() {
     clearSearch,
     loadStats,
   }
+}
+
+function newSeed() {
+  return Math.random().toString(36).slice(2, 10)
 }

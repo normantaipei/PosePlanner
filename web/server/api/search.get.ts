@@ -1,11 +1,11 @@
-// GET /api/search?q=&tag=&limit=&offset=
+// GET /api/search?q=&tag=&limit=&offset=&seed=
 // 代理到私有 DB server 的 /search，回傳結果陣列。token 在 server 端補上。
 export default defineEventHandler(async (event) => {
   const { baseUrl, token } = backendConfig(event)
   const q = getQuery(event)
 
   const params: Record<string, unknown> = {}
-  for (const k of ['q', 'tag', 'limit', 'offset'] as const) {
+  for (const k of ['q', 'tag', 'limit', 'offset', 'seed'] as const) {
     if (q[k] !== undefined && q[k] !== '') params[k] = q[k]
   }
   if (token) params.t = token
